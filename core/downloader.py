@@ -37,12 +37,24 @@ def build_youtube_search_terms(search_query: str) -> list[str]:
     return unique_terms
 
 
-def summarize_download_error(error: Exception) -> str:
+def summarize_download_error(error: Exception, used_chrome_cookies: bool = False) -> str:
     error_text = str(error)
     if "Sign in to confirm" in error_text or "not a bot" in error_text:
+        if used_chrome_cookies:
+            return (
+                "YouTube exigiu autenticacao/anti-bot mesmo usando os cookies do Chrome. "
+                "Abra o Chrome, entre no YouTube e tente novamente. "
+                "Se persistir, coloque um cookies.txt valido na pasta do projeto."
+            )
         return (
             "YouTube bloqueou por anti-bot/login. "
-            "Coloque um cookies.txt valido na pasta do projeto e tente novamente."
+            "O script esta usando os cookies do Chrome como rota de escape. "
+            "Se persistir, coloque um cookies.txt valido na pasta do projeto."
+        )
+    if "Could not copy Chrome cookie database" in error_text or "Failed to decrypt with DPAPI" in error_text:
+        return (
+            "Nao foi possivel ler os cookies do Chrome. "
+            "Feche o Chrome e tente novamente, ou coloque um cookies.txt valido na pasta do projeto."
         )
     return "Video nao encontrado ou bloqueado no YouTube."
 
@@ -67,11 +79,15 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
         "quiet": False,
         "no_warnings": True,
         "extract_flat": False,
+        "cookiesfrombrowser": ("chrome", None, None, None),
     }
 
+    using_chrome_cookies = True
     cookie_file = get_cookie_file_path()
     if cookie_file:
+        ydl_opts.pop("cookiesfrombrowser", None)
         ydl_opts["cookiefile"] = str(cookie_file)
+        using_chrome_cookies = False
 
     last_download_error = None
     try:
@@ -89,7 +105,7 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
                 except yt_dlp.utils.DownloadError as error:
                     last_download_error = error
                     if "Sign in to confirm" in str(error) or "not a bot" in str(error):
-                        return False, summarize_download_error(error)
+                        return False, summarize_download_error(error, using_chrome_cookies)
                     print("  -> Resultado nao encontrado. Tentando busca alternativa...")
 
         if last_download_error:
@@ -97,7 +113,7 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
 
         return True, "OK"
     except yt_dlp.utils.DownloadError as error:
-        return False, summarize_download_error(error)
+        return False, summarize_download_error(error, using_chrome_cookies)
     except yt_dlp.utils.PostProcessingError:
         return False, "Falha na conversao para MP3 (verifique o FFmpeg)."
     except Exception as error:
