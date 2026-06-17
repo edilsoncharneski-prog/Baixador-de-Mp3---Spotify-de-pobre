@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import yt_dlp
@@ -59,6 +60,12 @@ def summarize_download_error(error: Exception, used_chrome_cookies: bool = False
     return "Video nao encontrado ou bloqueado no YouTube."
 
 
+def shorten_error(error: Exception) -> str:
+    error_text = re.sub(r"\s+", " ", str(error)).strip()
+    error_text = error_text.replace("ERROR: ", "")
+    return error_text[:260]
+
+
 def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
     """
     Busca no YouTube e baixa/converte para MP3 usando yt-dlp e FFmpeg.
@@ -106,6 +113,12 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
                     last_download_error = error
                     if "Sign in to confirm" in str(error) or "not a bot" in str(error):
                         return False, summarize_download_error(error, using_chrome_cookies)
+                    if (
+                        "Could not copy Chrome cookie database" in str(error)
+                        or "Failed to decrypt with DPAPI" in str(error)
+                    ):
+                        return False, summarize_download_error(error, using_chrome_cookies)
+                    print(f"  -> Erro do yt-dlp: {shorten_error(error)}")
                     print("  -> Resultado nao encontrado. Tentando busca alternativa...")
 
         if last_download_error:
