@@ -14,6 +14,7 @@ O fluxo principal e simples: cole o link da playlist, escolha a pasta de destino
 - Barra de progresso geral
 - Console de logs em tempo real
 - Botao para abrir a pasta final apos o download
+- Suporte opcional a `cookies.txt` local para contornar bloqueios anti-bot do YouTube
 - Download/conversao para MP3 com `yt-dlp` e FFmpeg
 
 ## Como funciona
@@ -116,6 +117,20 @@ O executavel final sera gerado em:
 dist/BaixadorSpotifyMP3.exe
 ```
 
+## Bloqueio anti-bot do YouTube
+
+Se o log mostrar que o YouTube pediu login ou confirmou comportamento de bot, o video pode existir normalmente no YouTube, mas o `yt-dlp` foi bloqueado na hora de extrair o audio.
+
+Nesse caso, coloque um arquivo `cookies.txt` valido ao lado do executavel:
+
+```text
+dist/
+|-- BaixadorSpotifyMP3.exe
+`-- cookies.txt
+```
+
+Na execucao pelo terminal, coloque o `cookies.txt` na raiz do projeto. Esse arquivo e privado e esta protegido pelo `.gitignore`.
+
 ## Estrutura do projeto
 
 ```text
@@ -138,7 +153,7 @@ dist/BaixadorSpotifyMP3.exe
 - O FFmpeg e obrigatorio para converter os arquivos para MP3.
 - Playlists privadas ou que exigem login nao sao suportadas.
 - Este projeto nao usa a API oficial do Spotify e nao exige token.
-- O `.gitignore` impede que musicas, builds, executaveis e binarios locais do FFmpeg sejam enviados ao GitHub.
+- O `.gitignore` impede que musicas, builds, executaveis, cookies e binarios locais do FFmpeg sejam enviados ao GitHub.
 
 ## Aviso legal
 

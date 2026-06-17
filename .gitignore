@@ -223,6 +223,7 @@ build/
 dist/
 *.spec
 *.exe
+cookies.txt
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe

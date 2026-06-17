@@ -35,6 +35,20 @@ def get_app_base_path() -> Path:
     return Path(__file__).resolve().parent
 
 
+def get_external_base_path() -> Path:
+    """Retorna a pasta visivel do app, onde o usuario pode colocar arquivos auxiliares."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def get_cookie_file_path() -> Path | None:
+    cookie_file = get_external_base_path() / "cookies.txt"
+    if cookie_file.exists():
+        return cookie_file
+    return None
+
+
 def get_ffmpeg_location() -> str | None:
     base_path = get_app_base_path()
     ffmpeg_path = base_path / "ffmpeg.exe"
@@ -191,6 +205,16 @@ def build_youtube_search_terms(search_query: str) -> list[str]:
     return unique_terms
 
 
+def summarize_download_error(error: Exception) -> str:
+    error_text = str(error)
+    if "Sign in to confirm" in error_text or "not a bot" in error_text:
+        return (
+            "YouTube bloqueou por anti-bot/login. "
+            "Coloque um cookies.txt valido ao lado do .exe e tente novamente."
+        )
+    return "Video nao encontrado ou bloqueado no YouTube."
+
+
 def download_music(search_query: str, output_dir: str, ffmpeg_location: str | None, log) -> tuple[bool, str]:
     output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
 
@@ -223,6 +247,11 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
     if ffmpeg_location:
         ydl_opts["ffmpeg_location"] = ffmpeg_location
 
+    cookie_file = get_cookie_file_path()
+    if cookie_file:
+        ydl_opts["cookiefile"] = str(cookie_file)
+        log(f"  Usando cookies do YouTube: {cookie_file}")
+
     last_download_error = None
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -234,13 +263,15 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
                     return True, "OK"
                 except yt_dlp.utils.DownloadError as error:
                     last_download_error = error
+                    if "Sign in to confirm" in str(error) or "not a bot" in str(error):
+                        return False, summarize_download_error(error)
                     log("    Resultado nao encontrado. Tentando busca alternativa...")
 
         if last_download_error:
             raise last_download_error
         return True, "OK"
-    except yt_dlp.utils.DownloadError:
-        return False, "Video nao encontrado ou bloqueado no YouTube."
+    except yt_dlp.utils.DownloadError as error:
+        return False, summarize_download_error(error)
     except yt_dlp.utils.PostProcessingError:
         return False, "Falha na conversao para MP3. Verifique o FFmpeg."
     except Exception as error:
