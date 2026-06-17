@@ -2,6 +2,7 @@ import json
 import os
 import queue
 import re
+import shutil
 import sys
 import threading
 import tkinter.filedialog as filedialog
@@ -47,6 +48,20 @@ def get_cookie_file_path() -> Path | None:
     if cookie_file.exists():
         return cookie_file
     return None
+
+
+def get_js_runtime_options(log=None) -> dict:
+    if not shutil.which("node"):
+        if log:
+            log("  Node.js nao encontrado. Alguns videos podem falhar no challenge do YouTube.")
+        return {}
+
+    if log:
+        log("  Node.js detectado. Ativando solver JS do YouTube.")
+    return {
+        "js_runtimes": {"node": {}},
+        "remote_components": ["ejs:github"],
+    }
 
 
 def get_ffmpeg_location() -> str | None:
@@ -224,6 +239,11 @@ def summarize_download_error(error: Exception, used_chrome_cookies: bool = False
             "Nao foi possivel ler os cookies do Chrome. "
             "Feche o Chrome e tente novamente, ou coloque um cookies.txt valido ao lado do .exe."
         )
+    if "Requested format is not available" in error_text or "Only images are available" in error_text:
+        return (
+            "O YouTube retornou o video sem formato de audio. "
+            "Instale o Node.js ou atualize o yt-dlp para resolver o challenge do YouTube."
+        )
     return "Video nao encontrado ou bloqueado no YouTube."
 
 
@@ -265,6 +285,7 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
 
     if ffmpeg_location:
         ydl_opts["ffmpeg_location"] = ffmpeg_location
+    ydl_opts.update(get_js_runtime_options(log))
 
     using_chrome_cookies = True
     cookie_file = get_cookie_file_path()

@@ -46,6 +46,7 @@ musicas_pendrive/
 
 - Python 3.10 ou superior
 - FFmpeg instalado no sistema operacional ou embutido no executavel
+- Node.js instalado no Windows para ajudar o `yt-dlp` a resolver challenges recentes do YouTube
 - Conexao com a internet
 
 Dependencias Python:
@@ -130,6 +131,8 @@ dist/
 ```
 
 Na execucao pelo terminal, coloque o `cookies.txt` na raiz do projeto. Esse arquivo e privado e esta protegido pelo `.gitignore`.
+
+Se o log mostrar `Requested format is not available`, o YouTube pode ter entregue apenas formatos de imagem/storyboard. O app tenta usar Node.js automaticamente para resolver o challenge JavaScript do YouTube.
 
 ## Estrutura do projeto
 

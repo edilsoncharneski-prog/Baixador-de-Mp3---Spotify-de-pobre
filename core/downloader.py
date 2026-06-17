@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 from pathlib import Path
 
 import yt_dlp
@@ -10,6 +11,16 @@ def get_cookie_file_path() -> Path | None:
     if cookie_file.exists():
         return cookie_file
     return None
+
+
+def get_js_runtime_options() -> dict:
+    if not shutil.which("node"):
+        return {}
+
+    return {
+        "js_runtimes": {"node": {}},
+        "remote_components": ["ejs:github"],
+    }
 
 
 def split_track_search_query(search_query: str) -> tuple[str, str]:
@@ -57,6 +68,11 @@ def summarize_download_error(error: Exception, used_chrome_cookies: bool = False
             "Nao foi possivel ler os cookies do Chrome. "
             "Feche o Chrome e tente novamente, ou coloque um cookies.txt valido na pasta do projeto."
         )
+    if "Requested format is not available" in error_text or "Only images are available" in error_text:
+        return (
+            "O YouTube retornou o video sem formato de audio. "
+            "Instale o Node.js ou atualize o yt-dlp para resolver o challenge do YouTube."
+        )
     return "Video nao encontrado ou bloqueado no YouTube."
 
 
@@ -88,6 +104,7 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
         "extract_flat": False,
         "cookiesfrombrowser": ("chrome", None, None, None),
     }
+    ydl_opts.update(get_js_runtime_options())
 
     using_chrome_cookies = True
     cookie_file = get_cookie_file_path()
