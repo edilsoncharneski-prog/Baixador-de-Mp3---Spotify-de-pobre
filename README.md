@@ -118,6 +118,14 @@ O executavel final sera gerado em:
 dist/BaixadorSpotifyMP3.exe
 ```
 
+Uma copia publica do executavel pode ser disponibilizada em:
+
+```text
+release/BaixadorSpotifyMP3.exe
+```
+
+Nao publique `cookies.txt` junto com o executavel.
+
 ## Bloqueio anti-bot do YouTube
 
 Se o log mostrar que o YouTube pediu login ou confirmou comportamento de bot, o video pode existir normalmente no YouTube, mas o `yt-dlp` foi bloqueado na hora de extrair o audio.

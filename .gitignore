@@ -227,3 +227,7 @@ cookies.txt
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe
+
+# Public distributable
+!release/
+!release/BaixadorSpotifyMP3.exe
