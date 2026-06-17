@@ -130,6 +130,27 @@ dist/
 `-- cookies.txt
 ```
 
+### Como gerar o `cookies.txt` pelo navegador
+
+1. Abra o Chrome.
+2. Entre no site do YouTube e confirme que voce esta logado na sua conta.
+3. Instale uma extensao que exporte cookies no formato Netscape, por exemplo uma extensao chamada `cookies.txt` ou `Get cookies.txt LOCALLY`.
+4. Com o YouTube aberto, clique no icone da extensao.
+5. Exporte ou baixe os cookies do site atual em formato `.txt`.
+6. Renomeie o arquivo baixado para exatamente:
+
+   ```text
+   cookies.txt
+   ```
+
+7. Copie esse arquivo para a mesma pasta do executavel:
+
+   ```text
+   dist/cookies.txt
+   ```
+
+No Windows, confira se as extensoes de arquivo estao visiveis. Se o arquivo ficar como `cookies.txt.txt`, o app nao vai reconhecer.
+
 Na execucao pelo terminal, coloque o `cookies.txt` na raiz do projeto. Esse arquivo e privado e esta protegido pelo `.gitignore`.
 
 Se o log mostrar `Requested format is not available`, o YouTube pode ter entregue apenas formatos de imagem/storyboard. O app tenta usar Node.js automaticamente para resolver o challenge JavaScript do YouTube.
