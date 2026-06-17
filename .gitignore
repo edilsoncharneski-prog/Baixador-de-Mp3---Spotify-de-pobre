@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project outputs and local FFmpeg binaries
+musicas_pendrive/
+ffmpeg.exe
+ffplay.exe
+ffprobe.exe
