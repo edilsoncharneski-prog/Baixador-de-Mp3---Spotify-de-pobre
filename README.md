@@ -118,10 +118,10 @@ O executavel final sera gerado em:
 dist/BaixadorSpotifyMP3.exe
 ```
 
-Uma copia publica do executavel pode ser disponibilizada em:
+Para usuarios que nao querem instalar Python, o executavel pode ser disponibilizado na aba Releases do GitHub:
 
 ```text
-release/BaixadorSpotifyMP3.exe
+GitHub > Releases > BaixadorSpotifyMP3.exe
 ```
 
 Nao publique `cookies.txt` junto com o executavel.
