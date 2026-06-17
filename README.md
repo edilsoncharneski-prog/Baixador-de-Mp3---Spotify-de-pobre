@@ -1,14 +1,26 @@
 # Spotify Playlist para MP3
 
-Script em Python para ler uma playlist publica do Spotify, montar buscas no YouTube e baixar as faixas em MP3 usando `yt-dlp` e FFmpeg.
+Aplicativo em Python para ler uma playlist publica do Spotify, montar buscas no YouTube e baixar as faixas em MP3 usando `yt-dlp` e FFmpeg.
 
-O objetivo e simples: colar o link de uma playlist publica, deixar o script buscar as musicas automaticamente e gerar uma pasta com os arquivos `.mp3`, pronta para copiar para um pendrive ou outro dispositivo.
+O fluxo principal e simples: cole o link da playlist, escolha a pasta de destino, deixe o programa identificar o nome real da playlist e acompanhe o progresso geral pela interface.
+
+## Recursos
+
+- Interface grafica com `customtkinter`
+- Leitura de playlists publicas pelo embed do Spotify
+- Criacao automatica de pasta com o nome real da playlist
+- Limpeza de caracteres proibidos pelo Windows em nomes de pasta
+- Escolha da pasta base de destino pela interface
+- Barra de progresso geral
+- Console de logs em tempo real
+- Botao para abrir a pasta final apos o download
+- Download/conversao para MP3 com `yt-dlp` e FFmpeg
 
 ## Como funciona
 
 1. O usuario informa a URL de uma playlist publica do Spotify.
-2. O script converte a URL para a versao `embed` do Spotify.
-3. O parser extrai as faixas do bloco `__NEXT_DATA__` da pagina.
+2. O app converte a URL para a versao `embed` do Spotify.
+3. O parser extrai o nome da playlist e as faixas do bloco `__NEXT_DATA__`.
 4. Cada musica vira uma busca no YouTube no formato:
 
    ```text
@@ -17,12 +29,22 @@ O objetivo e simples: colar o link de uma playlist publica, deixar o script busc
 
 5. O `yt-dlp` baixa o melhor audio encontrado.
 6. O FFmpeg converte o audio para MP3.
-7. Os arquivos finais sao salvos na pasta `musicas_pendrive`.
+7. Os arquivos finais sao salvos em:
+
+   ```text
+   [Pasta escolhida]/[Nome da Playlist]/
+   ```
+
+Por padrao, a pasta base sugerida e:
+
+```text
+musicas_pendrive/
+```
 
 ## Requisitos
 
 - Python 3.10 ou superior
-- FFmpeg instalado no sistema operacional
+- FFmpeg instalado no sistema operacional ou embutido no executavel
 - Conexao com a internet
 
 Dependencias Python:
@@ -30,14 +52,16 @@ Dependencias Python:
 - `yt-dlp`
 - `requests`
 - `beautifulsoup4`
+- `customtkinter`
+- `pyinstaller`
 
 ## Instalacao
 
 Clone o repositorio:
 
 ```bash
-git clone https://github.com/seu-usuario/seu-repositorio.git
-cd seu-repositorio
+git clone https://github.com/edilsoncharneski-prog/Baixador-de-Mp3---Spotify-de-pobre.git
+cd Baixador-de-Mp3---Spotify-de-pobre
 ```
 
 Instale as dependencias:
@@ -46,75 +70,66 @@ Instale as dependencias:
 pip install -r requirements.txt
 ```
 
-Instale o FFmpeg e confirme que ele esta disponivel no terminal:
-
-```bash
-ffmpeg -version
-```
-
-Se o comando acima nao funcionar, o FFmpeg provavelmente nao esta instalado ou nao foi adicionado ao `PATH`.
-
-## Uso
+## Uso pela GUI
 
 Execute:
+
+```bash
+python main_gui.py
+```
+
+Depois:
+
+1. Cole a URL publica da playlist do Spotify.
+2. Escolha a pasta base de destino, se quiser mudar a padrao.
+3. Clique em `Iniciar Download`.
+4. Acompanhe o console e a barra de progresso.
+5. Ao final, clique em `Abrir Pasta Final`.
+
+URLs aceitas:
+
+```text
+https://open.spotify.com/playlist/ID_DA_PLAYLIST
+https://open.spotify.com/embed/playlist/ID_DA_PLAYLIST
+https://open.spotify.com/intl-pt/playlist/ID_DA_PLAYLIST
+```
+
+## Uso pelo terminal
+
+Tambem existe a versao simples em terminal:
 
 ```bash
 python main.py
 ```
 
-Cole a URL de uma playlist publica do Spotify quando o programa pedir:
+## Gerar executavel
 
-```text
-Cole a URL da playlist publica do Spotify aqui:
+Com `ffmpeg.exe` e `ffprobe.exe` na raiz do projeto, rode:
+
+```powershell
+python -m PyInstaller --onefile --noconsole --name "BaixadorSpotifyMP3" --collect-all customtkinter --hidden-import darkdetect --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." main_gui.py
 ```
 
-Exemplo de URL aceita:
+O executavel final sera gerado em:
 
 ```text
-https://open.spotify.com/playlist/ID_DA_PLAYLIST
-```
-
-Tambem sao aceitas URLs no formato:
-
-```text
-https://open.spotify.com/embed/playlist/ID_DA_PLAYLIST
-https://open.spotify.com/intl-pt/playlist/ID_DA_PLAYLIST
-```
-
-Ao final, os arquivos MP3 ficarao em:
-
-```text
-musicas_pendrive/
+dist/BaixadorSpotifyMP3.exe
 ```
 
 ## Estrutura do projeto
 
 ```text
 .
-├── main.py
-├── requirements.txt
-└── core/
-    ├── __init__.py
-    ├── downloader.py
-    ├── file_manager.py
-    └── spotify_parser.py
+|-- main.py
+|-- main_gui.py
+|-- requirements.txt
+|-- atualizar_github.bat
+`-- core/
+    |-- __init__.py
+    |-- downloader.py
+    |-- file_manager.py
+    `-- spotify_parser.py
 ```
-
-### `main.py`
-
-Orquestra o fluxo principal: recebe a URL, extrai as musicas, cria a pasta de destino, baixa os arquivos e exibe o relatorio final.
-
-### `core/spotify_parser.py`
-
-Faz a leitura da playlist publica do Spotify. O script usa a pagina `embed`, que costuma expor os dados publicos da playlist de forma mais direta do que a pagina normal.
-
-### `core/downloader.py`
-
-Usa `yt-dlp` para buscar a musica no YouTube e baixar o melhor audio disponivel, convertendo para MP3 com FFmpeg.
-
-### `core/file_manager.py`
-
-Cria a pasta de saida quando necessario.
 
 ## Observacoes importantes
 
@@ -123,6 +138,7 @@ Cria a pasta de saida quando necessario.
 - O FFmpeg e obrigatorio para converter os arquivos para MP3.
 - Playlists privadas ou que exigem login nao sao suportadas.
 - Este projeto nao usa a API oficial do Spotify e nao exige token.
+- O `.gitignore` impede que musicas, builds, executaveis e binarios locais do FFmpeg sejam enviados ao GitHub.
 
 ## Aviso legal
 

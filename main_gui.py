@@ -4,6 +4,7 @@ import queue
 import re
 import sys
 import threading
+import tkinter.filedialog as filedialog
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -214,14 +215,16 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         super().__init__()
 
         self.title("Spotify Playlist -> MP3")
-        self.geometry("880x620")
-        self.minsize(720, 520)
+        self.geometry("920x680")
+        self.minsize(760, 600)
 
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
+        self.destination_root = Path.cwd() / OUTPUT_DIR
+        self.last_output_dir: Path | None = None
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(5, weight=1)
 
         self.title_label = customtkinter.CTkLabel(
             self,
@@ -239,17 +242,76 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         )
         self.url_entry.grid(row=1, column=0, padx=36, pady=(10, 14), sticky="ew")
 
+        self.destination_frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        self.destination_frame.grid(row=2, column=0, padx=36, pady=(0, 12), sticky="ew")
+        self.destination_frame.grid_columnconfigure(0, weight=1)
+
+        self.destination_entry = customtkinter.CTkEntry(
+            self.destination_frame,
+            height=38,
+            font=customtkinter.CTkFont(size=13),
+            border_color=GOLD,
+        )
+        self.destination_entry.grid(row=0, column=0, padx=(0, 10), sticky="ew")
+        self.destination_entry.insert(0, str(self.destination_root))
+
+        self.choose_folder_button = customtkinter.CTkButton(
+            self.destination_frame,
+            text="Escolher Pasta",
+            width=140,
+            height=38,
+            command=self.choose_destination_folder,
+            fg_color=GOLD,
+            hover_color=GOLD_HOVER,
+            text_color="#111111",
+        )
+        self.choose_folder_button.grid(row=0, column=1)
+
+        self.action_frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        self.action_frame.grid(row=3, column=0, padx=36, pady=(0, 12))
+
         self.download_button = customtkinter.CTkButton(
-            self,
+            self.action_frame,
             text="Iniciar Download",
             height=44,
+            width=170,
             font=customtkinter.CTkFont(size=15, weight="bold"),
             command=self.start_download,
             fg_color=GOLD,
             hover_color=GOLD_HOVER,
             text_color="#111111",
         )
-        self.download_button.grid(row=2, column=0, padx=36, pady=(0, 18))
+        self.download_button.grid(row=0, column=0, padx=(0, 10))
+
+        self.open_folder_button = customtkinter.CTkButton(
+            self.action_frame,
+            text="Abrir Pasta Final",
+            height=44,
+            width=170,
+            font=customtkinter.CTkFont(size=15, weight="bold"),
+            command=self.open_last_output_folder,
+            state="disabled",
+        )
+        self.open_folder_button.grid(row=0, column=1)
+
+        self.progress_frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        self.progress_frame.grid(row=4, column=0, padx=36, pady=(0, 14), sticky="ew")
+        self.progress_frame.grid_columnconfigure(0, weight=1)
+
+        self.progress_bar = customtkinter.CTkProgressBar(
+            self.progress_frame,
+            height=12,
+            progress_color=GOLD,
+        )
+        self.progress_bar.grid(row=0, column=0, sticky="ew")
+        self.progress_bar.set(0)
+
+        self.progress_label = customtkinter.CTkLabel(
+            self.progress_frame,
+            text="Progresso geral: 0%",
+            width=140,
+        )
+        self.progress_label.grid(row=0, column=1, padx=(12, 0))
 
         self.log_textbox = customtkinter.CTkTextbox(
             self,
@@ -259,7 +321,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             border_color=GOLD,
             border_width=1,
         )
-        self.log_textbox.grid(row=3, column=0, padx=24, pady=(0, 24), sticky="nsew")
+        self.log_textbox.grid(row=5, column=0, padx=24, pady=(0, 24), sticky="nsew")
         self.log_textbox.insert(
             "end",
             "Pronto. Cole a URL da playlist e clique em Iniciar Download.\n",
@@ -270,6 +332,51 @@ class SpotifyDownloaderApp(customtkinter.CTk):
 
     def append_log(self, message: str) -> None:
         self.log_queue.put(message)
+
+    def choose_destination_folder(self) -> None:
+        initial_dir = self.destination_root if self.destination_root.exists() else Path.cwd()
+        selected_dir = filedialog.askdirectory(
+            title="Escolha a pasta de destino",
+            initialdir=str(initial_dir),
+        )
+        if not selected_dir:
+            return
+
+        self.destination_root = Path(selected_dir)
+        self.destination_entry.delete(0, "end")
+        self.destination_entry.insert(0, str(self.destination_root))
+        self.append_log(f"Pasta base selecionada: {self.destination_root}")
+
+    def open_last_output_folder(self) -> None:
+        if not self.last_output_dir or not self.last_output_dir.exists():
+            self.append_log("Nenhuma pasta final disponivel para abrir ainda.")
+            return
+
+        os.startfile(self.last_output_dir)
+
+    def set_progress(self, completed: int, total: int) -> None:
+        if total <= 0:
+            ratio = 0
+        else:
+            ratio = completed / total
+
+        percent = int(ratio * 100)
+        self.after(0, lambda: self.progress_bar.set(ratio))
+        self.after(
+            0,
+            lambda: self.progress_label.configure(
+                text=f"Progresso geral: {percent}% ({completed}/{total})"
+            ),
+        )
+
+    def set_controls_running(self, is_running: bool) -> None:
+        state = "disabled" if is_running else "normal"
+        self.download_button.configure(
+            state=state,
+            text="Baixando..." if is_running else "Iniciar Download",
+        )
+        self.choose_folder_button.configure(state=state)
+        self.destination_entry.configure(state=state)
 
     def process_log_queue(self) -> None:
         while not self.log_queue.empty():
@@ -291,15 +398,24 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             self.append_log("Informe a URL da playlist antes de iniciar.")
             return
 
-        self.download_button.configure(state="disabled", text="Baixando...")
+        destination_text = self.destination_entry.get().strip()
+        if not destination_text:
+            self.append_log("Informe uma pasta de destino antes de iniciar.")
+            return
+
+        self.destination_root = Path(destination_text)
+        self.last_output_dir = None
+        self.open_folder_button.configure(state="disabled")
+        self.set_progress(0, 0)
+        self.set_controls_running(True)
         self.worker_thread = threading.Thread(
             target=self.run_download_flow,
-            args=(playlist_url,),
+            args=(playlist_url, self.destination_root),
             daemon=True,
         )
         self.worker_thread.start()
 
-    def run_download_flow(self, playlist_url: str) -> None:
+    def run_download_flow(self, playlist_url: str, destination_root: Path) -> None:
         try:
             self.append_log("=" * 70)
             self.append_log("Iniciando processo...")
@@ -320,13 +436,15 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             self.append_log(f"Playlist identificada: {playlist_name}")
             self.append_log(f"{len(tracks)} musicas encontradas.")
 
-            output_dir = Path.cwd() / OUTPUT_DIR / playlist_name
+            output_dir = destination_root / playlist_name
             output_dir.mkdir(parents=True, exist_ok=True)
+            self.last_output_dir = output_dir
             self.append_log(f"Preparando pasta da playlist: {output_dir}")
             self.append_log("-" * 70)
 
             successes = 0
             failures = []
+            self.set_progress(0, len(tracks))
 
             for index, track in enumerate(tracks, start=1):
                 self.append_log(f"[{index}/{len(tracks)}]")
@@ -345,6 +463,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
                     self.append_log(f"  FALHOU: {message}")
 
                 self.append_log("")
+                self.set_progress(index, len(tracks))
 
             self.append_log("-" * 70)
             self.append_log("RELATORIO FINAL")
@@ -359,6 +478,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
                     self.append_log(f"- {track} ({error})")
 
             self.append_log("=" * 70)
+            self.after(0, lambda: self.open_folder_button.configure(state="normal"))
         except requests.exceptions.RequestException as error:
             self.append_log(f"ERRO DE CONEXAO: {error}")
         except ValueError as error:
@@ -366,13 +486,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         except Exception as error:
             self.append_log(f"ERRO INESPERADO: {type(error).__name__}: {error}")
         finally:
-            self.after(
-                0,
-                lambda: self.download_button.configure(
-                    state="normal",
-                    text="Iniciar Download",
-                ),
-            )
+            self.after(0, lambda: self.set_controls_running(False))
 
 
 if __name__ == "__main__":
