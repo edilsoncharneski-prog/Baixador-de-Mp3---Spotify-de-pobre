@@ -179,6 +179,14 @@ Se o log mostrar `Requested format is not available`, o YouTube pode ter entregu
 - Este projeto nao usa a API oficial do Spotify e nao exige token.
 - O `.gitignore` impede que musicas, builds, executaveis, cookies e binarios locais do FFmpeg sejam enviados ao GitHub.
 
+## Autoria e uso
+
+Desenvolvido por Edilson Charneski.
+
+Copyright (c) 2026 Edilson Charneski.
+
+Este projeto foi criado para uso pessoal e educacional, especialmente pensando em quem mora em locais com pouca internet movel e ainda usa pendrive para ouvir musica no dia a dia.
+
 ## Aviso legal
 
 Este projeto foi criado para fins educacionais e de automacao pessoal. Respeite os direitos autorais, os termos de uso das plataformas envolvidas e as leis aplicaveis no seu pais.

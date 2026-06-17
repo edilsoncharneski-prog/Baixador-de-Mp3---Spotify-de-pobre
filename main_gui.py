@@ -16,6 +16,14 @@ from bs4 import BeautifulSoup
 
 
 OUTPUT_DIR = "musicas_pendrive"
+APP_NAME = "BaixadorSpotifyMP3"
+APP_VERSION = "1.0"
+APP_AUTHOR = "Edilson Charneski"
+APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
+APP_USAGE_NOTE = (
+    "Ferramenta criada para uso pessoal e educacional, pensada para quem mora "
+    "em locais com pouca internet movel e ainda usa pendrive no dia a dia."
+)
 GOLD = "#d4af37"
 GOLD_HOVER = "#b8941f"
 DARK_PANEL = "#1f1f1f"
@@ -334,8 +342,8 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         super().__init__()
 
         self.title("Spotify Playlist -> MP3")
-        self.geometry("920x680")
-        self.minsize(760, 600)
+        self.geometry("920x720")
+        self.minsize(760, 640)
 
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
@@ -447,10 +455,82 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         )
         self.log_textbox.configure(state="disabled")
 
+        self.footer_frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        self.footer_frame.grid(row=6, column=0, padx=24, pady=(0, 12), sticky="ew")
+        self.footer_frame.grid_columnconfigure(0, weight=1)
+
+        self.footer_label = customtkinter.CTkLabel(
+            self.footer_frame,
+            text=f"{APP_NAME} v{APP_VERSION} | (c) 2026 {APP_AUTHOR} | uso pessoal",
+            font=customtkinter.CTkFont(size=11),
+            text_color="#9f9f9f",
+        )
+        self.footer_label.grid(row=0, column=0, sticky="w")
+
+        self.about_button = customtkinter.CTkButton(
+            self.footer_frame,
+            text="Sobre",
+            width=72,
+            height=28,
+            command=self.show_about_window,
+        )
+        self.about_button.grid(row=0, column=1, sticky="e")
+
         self.after(100, self.process_log_queue)
 
     def append_log(self, message: str) -> None:
         self.log_queue.put(message)
+
+    def show_about_window(self) -> None:
+        about_window = customtkinter.CTkToplevel(self)
+        about_window.title(f"Sobre o {APP_NAME}")
+        about_window.geometry("520x300")
+        about_window.resizable(False, False)
+        about_window.transient(self)
+        about_window.grab_set()
+
+        about_window.grid_columnconfigure(0, weight=1)
+
+        title_label = customtkinter.CTkLabel(
+            about_window,
+            text=f"{APP_NAME} v{APP_VERSION}",
+            font=customtkinter.CTkFont(size=22, weight="bold"),
+        )
+        title_label.grid(row=0, column=0, padx=24, pady=(24, 8), sticky="ew")
+
+        author_label = customtkinter.CTkLabel(
+            about_window,
+            text=f"Desenvolvido por {APP_AUTHOR}",
+            font=customtkinter.CTkFont(size=14, weight="bold"),
+        )
+        author_label.grid(row=1, column=0, padx=24, pady=(0, 8), sticky="ew")
+
+        copyright_label = customtkinter.CTkLabel(
+            about_window,
+            text=APP_COPYRIGHT,
+            font=customtkinter.CTkFont(size=13),
+        )
+        copyright_label.grid(row=2, column=0, padx=24, pady=(0, 12), sticky="ew")
+
+        usage_label = customtkinter.CTkLabel(
+            about_window,
+            text=APP_USAGE_NOTE,
+            wraplength=440,
+            justify="center",
+            font=customtkinter.CTkFont(size=13),
+        )
+        usage_label.grid(row=3, column=0, padx=24, pady=(0, 18), sticky="ew")
+
+        close_button = customtkinter.CTkButton(
+            about_window,
+            text="Fechar",
+            width=110,
+            command=about_window.destroy,
+            fg_color=GOLD,
+            hover_color=GOLD_HOVER,
+            text_color="#111111",
+        )
+        close_button.grid(row=4, column=0, padx=24, pady=(0, 24))
 
     def choose_destination_folder(self) -> None:
         initial_dir = self.destination_root if self.destination_root.exists() else Path.cwd()
