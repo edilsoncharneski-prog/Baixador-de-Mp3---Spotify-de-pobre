@@ -165,6 +165,32 @@ def extract_playlist_data(playlist_url: str, log) -> tuple[str, list[str]]:
         ) from error
 
 
+def split_track_search_query(search_query: str) -> tuple[str, str]:
+    if " - " not in search_query:
+        return search_query.strip(), ""
+
+    track_name, artist_name = search_query.split(" - ", 1)
+    return track_name.strip(), artist_name.strip()
+
+
+def build_youtube_search_terms(search_query: str) -> list[str]:
+    track_name, artist_name = split_track_search_query(search_query)
+    terms = []
+
+    if track_name and artist_name:
+        terms.append(f"ytsearch1:{track_name} {artist_name}")
+    if track_name:
+        terms.append(f"ytsearch1:{track_name}")
+    terms.append(f"ytsearch1:{search_query.replace(' - ', ' ')}")
+
+    unique_terms = []
+    for term in terms:
+        if term not in unique_terms:
+            unique_terms.append(term)
+
+    return unique_terms
+
+
 def download_music(search_query: str, output_dir: str, ffmpeg_location: str | None, log) -> tuple[bool, str]:
     output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
 
@@ -197,10 +223,21 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
     if ffmpeg_location:
         ydl_opts["ffmpeg_location"] = ffmpeg_location
 
+    last_download_error = None
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            log(f"  Buscando: {search_query}")
-            ydl.download([search_query])
+            for attempt, search_term in enumerate(build_youtube_search_terms(search_query), start=1):
+                try:
+                    display_term = search_term.replace("ytsearch1:", "", 1)
+                    log(f"  Busca {attempt}: {display_term}")
+                    ydl.download([search_term])
+                    return True, "OK"
+                except yt_dlp.utils.DownloadError as error:
+                    last_download_error = error
+                    log("    Resultado nao encontrado. Tentando busca alternativa...")
+
+        if last_download_error:
+            raise last_download_error
         return True, "OK"
     except yt_dlp.utils.DownloadError:
         return False, "Video nao encontrado ou bloqueado no YouTube."
