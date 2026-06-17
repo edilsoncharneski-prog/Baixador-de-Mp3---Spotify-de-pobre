@@ -1,5 +1,7 @@
 yt-dlp
 requests
 beautifulsoup4
+customtkinter
+pyinstaller
 
 # Lembrete: o FFmpeg deve estar instalado no sistema operacional.

@@ -219,6 +219,10 @@ __marimo__/
 
 # Project outputs and local FFmpeg binaries
 musicas_pendrive/
+build/
+dist/
+*.spec
+*.exe
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe
