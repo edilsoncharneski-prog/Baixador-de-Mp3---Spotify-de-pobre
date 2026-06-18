@@ -12,9 +12,13 @@ O fluxo principal e simples: cole o link da playlist, escolha a pasta de destino
 - Limpeza de caracteres proibidos pelo Windows em nomes de pasta
 - Escolha da pasta base de destino pela interface
 - Barra de progresso geral
+- Tela de abertura com splash screen
+- Indicador de musica atual em destaque
+- Botao para cancelar antes da proxima musica
+- Resumo final visual com status, sucessos, falhas e restantes
 - Console de logs em tempo real
 - Botao para abrir a pasta final apos o download
-- Suporte opcional a `cookies.txt` local para contornar bloqueios anti-bot do YouTube
+- Suporte opcional a `cookies.txt` local quando o YouTube exige sessao do navegador
 - Download/conversao para MP3 com `yt-dlp` e FFmpeg
 
 ## Como funciona
@@ -56,6 +60,7 @@ Dependencias Python:
 - `beautifulsoup4`
 - `customtkinter`
 - `pyinstaller`
+- `pillow`
 
 ## Instalacao
 
@@ -85,8 +90,9 @@ Depois:
 1. Cole a URL publica da playlist do Spotify.
 2. Escolha a pasta base de destino, se quiser mudar a padrao.
 3. Clique em `Iniciar Download`.
-4. Acompanhe o console e a barra de progresso.
-5. Ao final, clique em `Abrir Pasta Final`.
+4. Acompanhe a musica atual, a barra de progresso e o console de logs.
+5. Se precisar parar, clique em `Cancelar`. O app termina a musica atual e para antes da proxima.
+6. Ao final, confira o resumo visual e clique em `Abrir Pasta Final`.
 
 URLs aceitas:
 
@@ -109,7 +115,7 @@ python main.py
 Com `ffmpeg.exe` e `ffprobe.exe` na raiz do projeto, rode:
 
 ```powershell
-python -m PyInstaller --onefile --noconsole --name "BaixadorSpotifyMP3" --collect-all customtkinter --hidden-import darkdetect --add-binary "ffmpeg.exe;." --add-binary "ffprobe.exe;." main_gui.py
+python -m PyInstaller BaixadorSpotifyMP3.spec
 ```
 
 O executavel final sera gerado em:
@@ -126,9 +132,37 @@ GitHub > Releases > BaixadorSpotifyMP3.exe
 
 Nao publique `cookies.txt` junto com o executavel.
 
-## Bloqueio anti-bot do YouTube
+## Gerar instalador com Inno Setup
 
-Se o log mostrar que o YouTube pediu login ou confirmou comportamento de bot, o video pode existir normalmente no YouTube, mas o `yt-dlp` foi bloqueado na hora de extrair o audio.
+1. Gere o executavel com PyInstaller:
+
+   ```powershell
+   python -m PyInstaller BaixadorSpotifyMP3.spec
+   ```
+
+2. Instale o Inno Setup no Windows:
+
+   ```text
+   https://jrsoftware.org/isinfo.php
+   ```
+
+3. Abra e compile:
+
+   ```text
+   installer/BaixadorSpotifyMP3.iss
+   ```
+
+4. O instalador final sera salvo em:
+
+   ```text
+   release/BaixadorSpotifyMP3_Setup.exe
+   ```
+
+O instalador nao inclui `cookies.txt`.
+
+## Autenticacao do YouTube com cookies.txt
+
+Se o log mostrar que o YouTube pediu login ou sessao do navegador, o video pode existir normalmente no YouTube, mas o `yt-dlp` precisou de autenticacao para extrair o audio.
 
 Nesse caso, coloque um arquivo `cookies.txt` valido ao lado do executavel:
 
@@ -183,19 +217,28 @@ Se o log mostrar `Requested format is not available`, o YouTube pode ter entregu
 .
 |-- main.py
 |-- main_gui.py
+|-- icon_data.py
+|-- preparar_assets.py
 |-- requirements.txt
-|-- atualizar_github.bat
-`-- core/
+|-- BaixadorSpotifyMP3.spec
+|-- version_info.txt
+|-- core/
     |-- __init__.py
     |-- downloader.py
     |-- file_manager.py
-    `-- spotify_parser.py
+    |-- spotify_parser.py
+    `-- youtube.py
+|-- ui/
+    |-- __init__.py
+    `-- app.py
+`-- installer/
+    `-- BaixadorSpotifyMP3.iss
 ```
 
 ## Observacoes importantes
 
 - O Spotify pode alterar a estrutura interna da pagina a qualquer momento. Se isso acontecer, o parser pode precisar de ajustes.
-- O resultado depende da busca do YouTube. Em alguns casos, o primeiro resultado pode nao ser exatamente a faixa desejada.
+- O resultado depende da busca do YouTube. O app tenta rejeitar resultados claramente ruins, mas ainda pode errar em casos ambiguos.
 - O FFmpeg e obrigatorio para converter os arquivos para MP3.
 - Playlists privadas ou que exigem login nao sao suportadas.
 - Este projeto nao usa a API oficial do Spotify e nao exige token.
