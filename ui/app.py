@@ -534,9 +534,10 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         self.worker_thread: threading.Thread | None = None
         self.destination_root = Path.cwd() / OUTPUT_DIR
         self.last_output_dir: Path | None = None
+        self.cancel_requested = False
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(6, weight=1)
+        self.grid_rowconfigure(8, weight=1)
 
         self.title_label = customtkinter.CTkLabel(
             self,
@@ -635,6 +636,19 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         )
         self.download_button.grid(row=0, column=0, padx=(0, 10))
 
+        self.cancel_button = customtkinter.CTkButton(
+            self.action_frame,
+            text="Cancelar",
+            height=44,
+            width=130,
+            font=customtkinter.CTkFont(size=15, weight="bold"),
+            command=self.request_cancel,
+            state="disabled",
+            fg_color="#7f1d1d",
+            hover_color="#991b1b",
+        )
+        self.cancel_button.grid(row=0, column=1, padx=(0, 10))
+
         self.open_folder_button = customtkinter.CTkButton(
             self.action_frame,
             text="Abrir Pasta Final",
@@ -644,7 +658,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             command=self.open_last_output_folder,
             state="disabled",
         )
-        self.open_folder_button.grid(row=0, column=1)
+        self.open_folder_button.grid(row=0, column=2)
 
         self.progress_frame = customtkinter.CTkFrame(self, fg_color="transparent")
         self.progress_frame.grid(row=5, column=0, padx=36, pady=(0, 14), sticky="ew")
@@ -665,6 +679,37 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         )
         self.progress_label.grid(row=0, column=1, padx=(12, 0))
 
+        self.current_track_frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        self.current_track_frame.grid(row=6, column=0, padx=36, pady=(0, 10), sticky="ew")
+        self.current_track_frame.grid_columnconfigure(0, weight=1)
+
+        self.current_track_title = customtkinter.CTkLabel(
+            self.current_track_frame,
+            text="Baixando agora:",
+            font=customtkinter.CTkFont(size=13, weight="bold"),
+            text_color=GOLD,
+            anchor="w",
+        )
+        self.current_track_title.grid(row=0, column=0, sticky="ew")
+
+        self.current_track_label = customtkinter.CTkLabel(
+            self.current_track_frame,
+            text="Nenhum download em andamento.",
+            font=customtkinter.CTkFont(size=13),
+            text_color="#d7d7d7",
+            anchor="w",
+        )
+        self.current_track_label.grid(row=1, column=0, sticky="ew")
+
+        self.summary_label = customtkinter.CTkLabel(
+            self,
+            text="Resumo: aguardando inicio.",
+            font=customtkinter.CTkFont(size=13),
+            text_color=MUTED_TEXT,
+            anchor="w",
+        )
+        self.summary_label.grid(row=7, column=0, padx=36, pady=(0, 12), sticky="ew")
+
         self.log_textbox = customtkinter.CTkTextbox(
             self,
             wrap="word",
@@ -673,7 +718,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             border_color=GOLD,
             border_width=1,
         )
-        self.log_textbox.grid(row=6, column=0, padx=24, pady=(0, 24), sticky="nsew")
+        self.log_textbox.grid(row=8, column=0, padx=24, pady=(0, 24), sticky="nsew")
         self.log_textbox.insert(
             "end",
             "Pronto. Cole a URL da playlist e clique em Iniciar Download.\n",
@@ -681,7 +726,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         self.log_textbox.configure(state="disabled")
 
         self.footer_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.footer_frame.grid(row=7, column=0, padx=24, pady=(0, 12), sticky="ew")
+        self.footer_frame.grid(row=9, column=0, padx=24, pady=(0, 12), sticky="ew")
         self.footer_frame.grid_columnconfigure(0, weight=1)
 
         self.footer_label = customtkinter.CTkLabel(
@@ -917,14 +962,41 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             ),
         )
 
+    def set_current_track(self, track: str | None) -> None:
+        text = track if track else "Nenhum download em andamento."
+        self.after(0, lambda: self.current_track_label.configure(text=text))
+
+    def set_summary(
+        self,
+        status: str,
+        total: int = 0,
+        successes: int = 0,
+        failures: int = 0,
+        remaining: int = 0,
+    ) -> None:
+        summary = (
+            f"Resumo: {status} | Total: {total} | "
+            f"Baixadas: {successes} | Falhas: {failures} | Restantes: {remaining}"
+        )
+        self.after(0, lambda: self.summary_label.configure(text=summary))
+
     def set_controls_running(self, is_running: bool) -> None:
         state = "disabled" if is_running else "normal"
         self.download_button.configure(
             state=state,
             text="Baixando..." if is_running else "Iniciar Download",
         )
+        self.cancel_button.configure(state="normal" if is_running else "disabled")
         self.choose_folder_button.configure(state=state)
         self.destination_entry.configure(state=state)
+
+    def request_cancel(self) -> None:
+        if not self.worker_thread or not self.worker_thread.is_alive():
+            return
+
+        self.cancel_requested = True
+        self.cancel_button.configure(state="disabled", text="Cancelando...")
+        self.append_log("Cancelamento solicitado. O app vai parar antes da proxima musica.")
 
     def process_log_queue(self) -> None:
         while not self.log_queue.empty():
@@ -953,8 +1025,11 @@ class SpotifyDownloaderApp(customtkinter.CTk):
 
         self.destination_root = Path(destination_text)
         self.last_output_dir = None
+        self.cancel_requested = False
         self.open_folder_button.configure(state="disabled")
         self.set_progress(0, 0)
+        self.set_current_track(None)
+        self.set_summary("em andamento")
         self.set_controls_running(True)
         self.worker_thread = threading.Thread(
             target=self.run_download_flow,
@@ -1005,8 +1080,16 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             successes = 0
             failures = []
             self.set_progress(0, len(tracks))
+            self.set_summary("em andamento", len(tracks), successes, len(failures), len(tracks))
 
             for index, track in enumerate(tracks, start=1):
+                if self.cancel_requested:
+                    remaining = len(tracks) - index + 1
+                    self.append_log("Download cancelado pelo usuario.")
+                    self.append_log(f"Musicas restantes nao processadas: {remaining}")
+                    break
+
+                self.set_current_track(track)
                 self.append_log(f"[{index}/{len(tracks)}]")
                 success, message = download_music(
                     track,
@@ -1024,12 +1107,25 @@ class SpotifyDownloaderApp(customtkinter.CTk):
 
                 self.append_log("")
                 self.set_progress(index, len(tracks))
+                remaining = len(tracks) - index
+                self.set_summary(
+                    "em andamento",
+                    len(tracks),
+                    successes,
+                    len(failures),
+                    remaining,
+                )
 
+            canceled = self.cancel_requested
+            completed = successes + len(failures)
+            remaining = max(len(tracks) - completed, 0)
             self.append_log("-" * 70)
             self.append_log("RELATORIO FINAL")
             self.append_log(f"Total na playlist    : {len(tracks)}")
             self.append_log(f"Baixadas com sucesso : {successes}")
             self.append_log(f"Falhas               : {len(failures)}")
+            if canceled:
+                self.append_log(f"Canceladas/restantes : {remaining}")
 
             if failures:
                 self.append_log("")
@@ -1038,15 +1134,23 @@ class SpotifyDownloaderApp(customtkinter.CTk):
                     self.append_log(f"- {track} ({error})")
 
             self.append_log("=" * 70)
+            final_status = "cancelado" if canceled else "concluido"
+            self.set_current_track(None)
+            self.set_summary(final_status, len(tracks), successes, len(failures), remaining)
             self.after(0, lambda: self.open_folder_button.configure(state="normal"))
         except requests.exceptions.RequestException as error:
             self.append_log(f"ERRO DE CONEXAO: {error}")
+            self.set_summary("erro")
         except ValueError as error:
             self.append_log(f"ERRO: {error}")
+            self.set_summary("erro")
         except Exception as error:
             self.append_log(f"ERRO INESPERADO: {type(error).__name__}: {error}")
+            self.set_summary("erro")
         finally:
+            self.set_current_track(None)
             self.after(0, lambda: self.set_controls_running(False))
+            self.after(0, lambda: self.cancel_button.configure(text="Cancelar"))
 
 
 def main() -> None:
