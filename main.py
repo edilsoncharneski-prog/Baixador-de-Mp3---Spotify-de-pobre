@@ -2,7 +2,11 @@ import sys
 
 import requests
 
-from core.downloader import download_music
+from core.downloader import (
+    download_music,
+    get_cookie_file_path,
+    get_expected_cookie_file_path,
+)
 from core.file_manager import create_output_dir
 from core.spotify_parser import extract_playlist_tracks
 
@@ -37,6 +41,13 @@ def main() -> None:
     print("[ETAPA 2/3] Preparando pasta de destino...")
     dir_path = create_output_dir(OUTPUT_DIR)
     print(f"  Pasta: {dir_path}\n")
+
+    cookie_file = get_cookie_file_path()
+    if cookie_file:
+        print(f"  cookies.txt encontrado: {cookie_file}")
+    else:
+        print(f"  cookies.txt nao encontrado ou vazio em: {get_expected_cookie_file_path()}")
+        print("  O script nao vai tentar ler cookies do Chrome.\n")
 
     print("[ETAPA 3/3] Iniciando lote de downloads...")
     print("-" * 60)

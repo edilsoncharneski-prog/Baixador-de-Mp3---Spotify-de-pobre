@@ -6,9 +6,13 @@ from pathlib import Path
 import yt_dlp
 
 
+def get_expected_cookie_file_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "cookies.txt"
+
+
 def get_cookie_file_path() -> Path | None:
-    cookie_file = Path(__file__).resolve().parent.parent / "cookies.txt"
-    if cookie_file.exists():
+    cookie_file = get_expected_cookie_file_path()
+    if cookie_file.is_file() and cookie_file.stat().st_size > 0:
         return cookie_file
     return None
 
@@ -49,24 +53,22 @@ def build_youtube_search_terms(search_query: str) -> list[str]:
     return unique_terms
 
 
-def summarize_download_error(error: Exception, used_chrome_cookies: bool = False) -> str:
+def summarize_download_error(error: Exception, used_cookie_file: bool = False) -> str:
     error_text = str(error)
     if "Sign in to confirm" in error_text or "not a bot" in error_text:
-        if used_chrome_cookies:
+        if used_cookie_file:
             return (
-                "YouTube exigiu autenticacao/anti-bot mesmo usando os cookies do Chrome. "
-                "Abra o Chrome, entre no YouTube e tente novamente. "
-                "Se persistir, coloque um cookies.txt valido na pasta do projeto."
+                "YouTube exigiu autenticacao/anti-bot mesmo usando cookies.txt. "
+                "Exporte cookies novos do YouTube e substitua o arquivo na pasta do projeto."
             )
         return (
             "YouTube bloqueou por anti-bot/login. "
-            "O script esta usando os cookies do Chrome como rota de escape. "
-            "Se persistir, coloque um cookies.txt valido na pasta do projeto."
+            "Coloque um cookies.txt valido na pasta do projeto e tente novamente."
         )
     if "Could not copy Chrome cookie database" in error_text or "Failed to decrypt with DPAPI" in error_text:
         return (
-            "Nao foi possivel ler os cookies do Chrome. "
-            "Feche o Chrome e tente novamente, ou coloque um cookies.txt valido na pasta do projeto."
+            "Nao foi possivel ler os cookies. "
+            "Coloque um cookies.txt valido na pasta do projeto e tente novamente."
         )
     if "Requested format is not available" in error_text or "Only images are available" in error_text:
         return (
@@ -102,16 +104,13 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
         "quiet": False,
         "no_warnings": True,
         "extract_flat": False,
-        "cookiesfrombrowser": ("chrome", None, None, None),
     }
     ydl_opts.update(get_js_runtime_options())
 
-    using_chrome_cookies = True
     cookie_file = get_cookie_file_path()
+    using_cookie_file = bool(cookie_file)
     if cookie_file:
-        ydl_opts.pop("cookiesfrombrowser", None)
         ydl_opts["cookiefile"] = str(cookie_file)
-        using_chrome_cookies = False
 
     last_download_error = None
     try:
@@ -129,12 +128,12 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
                 except yt_dlp.utils.DownloadError as error:
                     last_download_error = error
                     if "Sign in to confirm" in str(error) or "not a bot" in str(error):
-                        return False, summarize_download_error(error, using_chrome_cookies)
+                        return False, summarize_download_error(error, using_cookie_file)
                     if (
                         "Could not copy Chrome cookie database" in str(error)
                         or "Failed to decrypt with DPAPI" in str(error)
                     ):
-                        return False, summarize_download_error(error, using_chrome_cookies)
+                        return False, summarize_download_error(error, using_cookie_file)
                     print(f"  -> Erro do yt-dlp: {shorten_error(error)}")
                     print("  -> Resultado nao encontrado. Tentando busca alternativa...")
 
@@ -143,7 +142,7 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
 
         return True, "OK"
     except yt_dlp.utils.DownloadError as error:
-        return False, summarize_download_error(error, using_chrome_cookies)
+        return False, summarize_download_error(error, using_cookie_file)
     except yt_dlp.utils.PostProcessingError:
         return False, "Falha na conversao para MP3 (verifique o FFmpeg)."
     except Exception as error:

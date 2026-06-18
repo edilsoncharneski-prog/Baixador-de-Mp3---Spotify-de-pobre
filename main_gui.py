@@ -6,6 +6,7 @@ import shutil
 import sys
 import threading
 import tkinter.filedialog as filedialog
+import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -24,10 +25,21 @@ APP_USAGE_NOTE = (
     "Ferramenta criada para uso pessoal e educacional, pensada para quem mora "
     "em locais com pouca internet movel e ainda usa pendrive no dia a dia."
 )
+COOKIE_EXTENSION_URL = (
+    "https://chromewebstore.google.com/detail/get-cookiestxt-locally/"
+    "cclelndahbckbenkjhflpdbgdldlbecc"
+)
 GOLD = "#d4af37"
 GOLD_HOVER = "#b8941f"
 DARK_PANEL = "#1f1f1f"
+COOKIE_OK = "#39d98a"
+COOKIE_MISSING = "#ff4d4f"
+MUTED_TEXT = "#9f9f9f"
 INVALID_WINDOWS_CHARS = r'[\\/:*?"<>|]'
+SPOTIFY_PLAYLIST_QUERY_URL = "https://api-partner.spotify.com/pathfinder/v1/query"
+SPOTIFY_PLAYLIST_QUERY_HASH = (
+    "908a5597b4d0af0489a9ad6a2d41bc3b416ff47c0884016d92bbd6822d0eb6d8"
+)
 
 
 customtkinter.set_appearance_mode("dark")
@@ -51,9 +63,13 @@ def get_external_base_path() -> Path:
     return Path(__file__).resolve().parent
 
 
+def get_expected_cookie_file_path() -> Path:
+    return get_external_base_path() / "cookies.txt"
+
+
 def get_cookie_file_path() -> Path | None:
-    cookie_file = get_external_base_path() / "cookies.txt"
-    if cookie_file.exists():
+    cookie_file = get_expected_cookie_file_path()
+    if cookie_file.is_file() and cookie_file.stat().st_size > 0:
         return cookie_file
     return None
 
@@ -88,7 +104,7 @@ def get_ffmpeg_location() -> str | None:
     return None
 
 
-def build_embed_playlist_url(playlist_url: str) -> str:
+def extract_playlist_id(playlist_url: str) -> str:
     parsed_url = urlparse(playlist_url)
     path_parts = [part for part in parsed_url.path.split("/") if part]
 
@@ -98,17 +114,19 @@ def build_embed_playlist_url(playlist_url: str) -> str:
         )
 
     if path_parts[:2] == ["embed", "playlist"] and len(path_parts) >= 3:
-        playlist_id = path_parts[2]
-    elif path_parts[:1] == ["playlist"] and len(path_parts) >= 2:
-        playlist_id = path_parts[1]
-    elif len(path_parts) >= 3 and path_parts[1] == "playlist":
-        playlist_id = path_parts[2]
-    else:
-        raise ValueError(
-            "URL invalida. Use um link publico de playlist do Spotify."
-        )
+        return path_parts[2]
+    if path_parts[:1] == ["playlist"] and len(path_parts) >= 2:
+        return path_parts[1]
+    if len(path_parts) >= 3 and path_parts[1] == "playlist":
+        return path_parts[2]
 
-    return f"https://open.spotify.com/embed/playlist/{playlist_id}"
+    raise ValueError(
+        "URL invalida. Use um link publico de playlist do Spotify."
+    )
+
+
+def build_embed_playlist_url(playlist_url: str) -> str:
+    return f"https://open.spotify.com/embed/playlist/{extract_playlist_id(playlist_url)}"
 
 
 def sanitize_folder_name(folder_name: str) -> str:
@@ -148,12 +166,105 @@ def extract_tracks_from_page_data(data: dict) -> list[str]:
     return tracks
 
 
+def extract_access_token_from_embed_data(data: dict) -> str | None:
+    try:
+        token = data["props"]["pageProps"]["state"]["settings"]["session"]["accessToken"]
+    except (KeyError, TypeError):
+        return None
+
+    return str(token) if token else None
+
+
+def extract_track_from_graphql_item(item: dict) -> str | None:
+    track = item.get("itemV2", {}).get("data", {})
+    if track.get("__typename") != "Track":
+        return None
+
+    track_name = track.get("name")
+    artist_items = track.get("artists", {}).get("items", [])
+    artist_names = [
+        artist.get("profile", {}).get("name")
+        for artist in artist_items
+        if artist.get("profile", {}).get("name")
+    ]
+
+    if not track_name or not artist_names:
+        return None
+
+    return f"{track_name} - {', '.join(artist_names)}"
+
+
+def fetch_all_tracks_from_graphql(playlist_id: str, access_token: str, log) -> list[str]:
+    tracks = []
+    offset = 0
+    limit = 100
+
+    headers = {
+        "Accept": "application/json",
+        "App-Platform": "WebPlayer",
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+    }
+
+    while True:
+        payload = {
+            "operationName": "queryPlaylist",
+            "variables": {
+                "uri": f"spotify:playlist:{playlist_id}",
+                "limit": limit,
+                "offset": offset,
+            },
+            "extensions": {
+                "persistedQuery": {
+                    "version": 1,
+                    "sha256Hash": SPOTIFY_PLAYLIST_QUERY_HASH,
+                }
+            },
+        }
+
+        response = requests.post(
+            SPOTIFY_PLAYLIST_QUERY_URL,
+            headers=headers,
+            json=payload,
+            timeout=20,
+        )
+        response.raise_for_status()
+        playlist = response.json()["data"]["playlistV2"]
+        if playlist.get("__typename") != "Playlist":
+            raise ValueError("O Spotify nao retornou uma playlist valida.")
+
+        content = playlist["content"]
+        items = content.get("items", [])
+        page_tracks = []
+        for item in items:
+            track = extract_track_from_graphql_item(item)
+            if track:
+                page_tracks.append(track)
+
+        tracks.extend(page_tracks)
+        total_count = int(content.get("totalCount") or 0)
+        log(f"  Carregadas {len(tracks)}/{total_count or '?'} musicas do Spotify...")
+
+        next_offset = content.get("pagingInfo", {}).get("nextOffset")
+        if not next_offset or not items or (total_count and next_offset >= total_count):
+            break
+
+        offset = int(next_offset)
+
+    return tracks
+
+
 def extract_playlist_data(playlist_url: str, log) -> tuple[str, list[str]]:
     if not re.match(r"https?://open\.spotify\.com/", playlist_url):
         raise ValueError(
             "URL invalida. Use um link publico de playlist do Spotify."
         )
 
+    playlist_id = extract_playlist_id(playlist_url)
     embed_url = build_embed_playlist_url(playlist_url)
     headers = {
         "User-Agent": (
@@ -187,6 +298,17 @@ def extract_playlist_data(playlist_url: str, log) -> tuple[str, list[str]]:
             playlist_name = extract_playlist_name_from_page_data(data)
         except (KeyError, TypeError):
             pass
+
+    access_token = extract_access_token_from_embed_data(data)
+    if access_token:
+        try:
+            log("Buscando todas as paginas da playlist...")
+            tracks = fetch_all_tracks_from_graphql(playlist_id, access_token, log)
+            if tracks:
+                return playlist_name, tracks
+        except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as error:
+            log(f"  Nao foi possivel paginar pelo Spotify: {shorten_error(error)}")
+            log("  Usando lista inicial disponivel no embed.")
 
     try:
         return playlist_name, extract_tracks_from_embed_data(data)
@@ -228,24 +350,22 @@ def build_youtube_search_terms(search_query: str) -> list[str]:
     return unique_terms
 
 
-def summarize_download_error(error: Exception, used_chrome_cookies: bool = False) -> str:
+def summarize_download_error(error: Exception, used_cookie_file: bool = False) -> str:
     error_text = str(error)
     if "Sign in to confirm" in error_text or "not a bot" in error_text:
-        if used_chrome_cookies:
+        if used_cookie_file:
             return (
-                "YouTube exigiu autenticacao/anti-bot mesmo usando os cookies do Chrome. "
-                "Abra o Chrome, entre no YouTube e tente novamente. "
-                "Se persistir, coloque um cookies.txt valido ao lado do .exe."
+                "YouTube exigiu autenticacao/anti-bot mesmo usando cookies.txt. "
+                "Exporte cookies novos do YouTube e substitua o arquivo ao lado do .exe."
             )
         return (
             "YouTube bloqueou por anti-bot/login. "
-            "O app esta usando os cookies do Chrome como rota de escape. "
-            "Se persistir, coloque um cookies.txt valido ao lado do .exe."
+            "Coloque um cookies.txt valido ao lado do .exe e tente novamente."
         )
     if "Could not copy Chrome cookie database" in error_text or "Failed to decrypt with DPAPI" in error_text:
         return (
-            "Nao foi possivel ler os cookies do Chrome. "
-            "Feche o Chrome e tente novamente, ou coloque um cookies.txt valido ao lado do .exe."
+            "Nao foi possivel ler os cookies. "
+            "Coloque um cookies.txt valido ao lado do .exe e tente novamente."
         )
     if "Requested format is not available" in error_text or "Only images are available" in error_text:
         return (
@@ -288,22 +408,16 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
         "no_warnings": True,
         "extract_flat": False,
         "progress_hooks": [progress_hook],
-        "cookiesfrombrowser": ("chrome", None, None, None),
     }
 
     if ffmpeg_location:
         ydl_opts["ffmpeg_location"] = ffmpeg_location
     ydl_opts.update(get_js_runtime_options(log))
 
-    using_chrome_cookies = True
     cookie_file = get_cookie_file_path()
+    using_cookie_file = bool(cookie_file)
     if cookie_file:
-        ydl_opts.pop("cookiesfrombrowser", None)
         ydl_opts["cookiefile"] = str(cookie_file)
-        using_chrome_cookies = False
-        log(f"  Usando cookies do YouTube: {cookie_file}")
-    else:
-        log("  Usando cookies do Chrome automaticamente para evitar bloqueio anti-bot.")
 
     last_download_error = None
     try:
@@ -317,12 +431,12 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
                 except yt_dlp.utils.DownloadError as error:
                     last_download_error = error
                     if "Sign in to confirm" in str(error) or "not a bot" in str(error):
-                        return False, summarize_download_error(error, using_chrome_cookies)
+                        return False, summarize_download_error(error, using_cookie_file)
                     if (
                         "Could not copy Chrome cookie database" in str(error)
                         or "Failed to decrypt with DPAPI" in str(error)
                     ):
-                        return False, summarize_download_error(error, using_chrome_cookies)
+                        return False, summarize_download_error(error, using_cookie_file)
                     log(f"    Erro do yt-dlp: {shorten_error(error)}")
                     log("    Resultado nao encontrado. Tentando busca alternativa...")
 
@@ -330,7 +444,7 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
             raise last_download_error
         return True, "OK"
     except yt_dlp.utils.DownloadError as error:
-        return False, summarize_download_error(error, using_chrome_cookies)
+        return False, summarize_download_error(error, using_cookie_file)
     except yt_dlp.utils.PostProcessingError:
         return False, "Falha na conversao para MP3. Verifique o FFmpeg."
     except Exception as error:
@@ -351,7 +465,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         self.last_output_dir: Path | None = None
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(5, weight=1)
+        self.grid_rowconfigure(6, weight=1)
 
         self.title_label = customtkinter.CTkLabel(
             self,
@@ -394,8 +508,48 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         )
         self.choose_folder_button.grid(row=0, column=1)
 
+        self.cookie_status_frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        self.cookie_status_frame.grid(row=3, column=0, padx=36, pady=(0, 12), sticky="ew")
+        self.cookie_status_frame.grid_columnconfigure(1, weight=1)
+
+        self.cookie_status_light = customtkinter.CTkFrame(
+            self.cookie_status_frame,
+            width=12,
+            height=12,
+            corner_radius=6,
+            fg_color=COOKIE_MISSING,
+        )
+        self.cookie_status_light.grid(row=0, column=0, padx=(0, 8), pady=4)
+        self.cookie_status_light.grid_propagate(False)
+
+        self.cookie_status_label = customtkinter.CTkLabel(
+            self.cookie_status_frame,
+            text="cookies nao detectados",
+            font=customtkinter.CTkFont(size=12, weight="bold"),
+            text_color=COOKIE_MISSING,
+        )
+        self.cookie_status_label.grid(row=0, column=1, sticky="w")
+
+        self.open_cookie_folder_button = customtkinter.CTkButton(
+            self.cookie_status_frame,
+            text="Abrir pasta",
+            width=96,
+            height=30,
+            command=self.open_cookie_folder,
+        )
+        self.open_cookie_folder_button.grid(row=0, column=2, padx=(10, 8))
+
+        self.cookie_help_button = customtkinter.CTkButton(
+            self.cookie_status_frame,
+            text="Ajuda cookies",
+            width=112,
+            height=30,
+            command=self.show_cookie_help_window,
+        )
+        self.cookie_help_button.grid(row=0, column=3)
+
         self.action_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.action_frame.grid(row=3, column=0, padx=36, pady=(0, 12))
+        self.action_frame.grid(row=4, column=0, padx=36, pady=(0, 12))
 
         self.download_button = customtkinter.CTkButton(
             self.action_frame,
@@ -422,7 +576,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         self.open_folder_button.grid(row=0, column=1)
 
         self.progress_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.progress_frame.grid(row=4, column=0, padx=36, pady=(0, 14), sticky="ew")
+        self.progress_frame.grid(row=5, column=0, padx=36, pady=(0, 14), sticky="ew")
         self.progress_frame.grid_columnconfigure(0, weight=1)
 
         self.progress_bar = customtkinter.CTkProgressBar(
@@ -448,7 +602,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             border_color=GOLD,
             border_width=1,
         )
-        self.log_textbox.grid(row=5, column=0, padx=24, pady=(0, 24), sticky="nsew")
+        self.log_textbox.grid(row=6, column=0, padx=24, pady=(0, 24), sticky="nsew")
         self.log_textbox.insert(
             "end",
             "Pronto. Cole a URL da playlist e clique em Iniciar Download.\n",
@@ -456,7 +610,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         self.log_textbox.configure(state="disabled")
 
         self.footer_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.footer_frame.grid(row=6, column=0, padx=24, pady=(0, 12), sticky="ew")
+        self.footer_frame.grid(row=7, column=0, padx=24, pady=(0, 12), sticky="ew")
         self.footer_frame.grid_columnconfigure(0, weight=1)
 
         self.footer_label = customtkinter.CTkLabel(
@@ -476,10 +630,119 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         )
         self.about_button.grid(row=0, column=1, sticky="e")
 
+        self.update_cookie_status()
         self.after(100, self.process_log_queue)
+        self.after(2000, self.refresh_cookie_status)
 
     def append_log(self, message: str) -> None:
         self.log_queue.put(message)
+
+    def update_cookie_status(self) -> None:
+        cookie_file = get_cookie_file_path()
+        if cookie_file:
+            self.cookie_status_light.configure(fg_color=COOKIE_OK)
+            self.cookie_status_label.configure(
+                text="cookies detectados",
+                text_color=COOKIE_OK,
+            )
+        else:
+            self.cookie_status_light.configure(fg_color=COOKIE_MISSING)
+            self.cookie_status_label.configure(
+                text="cookies nao detectados",
+                text_color=COOKIE_MISSING,
+            )
+
+    def refresh_cookie_status(self) -> None:
+        self.update_cookie_status()
+        self.after(2000, self.refresh_cookie_status)
+
+    def open_cookie_folder(self) -> None:
+        cookie_folder = get_external_base_path()
+        cookie_folder.mkdir(parents=True, exist_ok=True)
+        os.startfile(cookie_folder)
+
+    def show_cookie_help_window(self) -> None:
+        help_window = customtkinter.CTkToplevel(self)
+        help_window.title("Ajuda cookies")
+        help_window.geometry("620x420")
+        help_window.resizable(False, False)
+        help_window.transient(self)
+        help_window.grab_set()
+
+        help_window.grid_columnconfigure(0, weight=1)
+
+        title_label = customtkinter.CTkLabel(
+            help_window,
+            text="Como deixar os cookies prontos",
+            font=customtkinter.CTkFont(size=21, weight="bold"),
+        )
+        title_label.grid(row=0, column=0, padx=24, pady=(24, 10), sticky="ew")
+
+        steps_text = (
+            "1. Clique em Instalar extensao e adicione a extensao ao Chrome.\n"
+            "2. Abra o YouTube no Chrome e entre na sua conta.\n"
+            "3. Clique no icone da extensao Get cookies.txt LOCALLY.\n"
+            "4. Escolha exportar/baixar em formato Netscape.\n"
+            "5. Renomeie o arquivo baixado para exatamente cookies.txt.\n"
+            "6. Coloque esse arquivo na pasta aberta pelo botao Abrir pasta.\n\n"
+            "Quando estiver certo, a luz desta tela fica verde e aparece cookies detectados."
+        )
+        steps_label = customtkinter.CTkLabel(
+            help_window,
+            text=steps_text,
+            justify="left",
+            wraplength=540,
+            font=customtkinter.CTkFont(size=14),
+        )
+        steps_label.grid(row=1, column=0, padx=32, pady=(0, 18), sticky="w")
+
+        expected_label = customtkinter.CTkLabel(
+            help_window,
+            text=f"Local esperado: {get_expected_cookie_file_path()}",
+            justify="left",
+            wraplength=540,
+            font=customtkinter.CTkFont(size=12),
+            text_color=MUTED_TEXT,
+        )
+        expected_label.grid(row=2, column=0, padx=32, pady=(0, 18), sticky="w")
+
+        button_frame = customtkinter.CTkFrame(help_window, fg_color="transparent")
+        button_frame.grid(row=3, column=0, padx=24, pady=(0, 24))
+
+        youtube_button = customtkinter.CTkButton(
+            button_frame,
+            text="Instalar extensao",
+            width=140,
+            command=lambda: webbrowser.open(COOKIE_EXTENSION_URL),
+        )
+        youtube_button.grid(row=0, column=0, padx=(0, 10))
+
+        youtube_button = customtkinter.CTkButton(
+            button_frame,
+            text="Abrir YouTube",
+            width=120,
+            command=lambda: webbrowser.open("https://www.youtube.com/"),
+        )
+        youtube_button.grid(row=0, column=1, padx=(0, 10))
+
+        folder_button = customtkinter.CTkButton(
+            button_frame,
+            text="Abrir pasta",
+            width=120,
+            command=self.open_cookie_folder,
+        )
+        folder_button.grid(row=0, column=2, padx=(0, 10))
+
+        close_button = customtkinter.CTkButton(
+            button_frame,
+            text="Fechar",
+            width=100,
+            command=help_window.destroy,
+            fg_color=GOLD,
+            hover_color=GOLD_HOVER,
+            text_color="#111111",
+        )
+        close_button.grid(row=0, column=3)
 
     def show_about_window(self) -> None:
         about_window = customtkinter.CTkToplevel(self)
@@ -625,6 +888,18 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             else:
                 self.append_log(
                     "FFmpeg nao foi encontrado junto ao app. Tentando usar o PATH do sistema."
+                )
+
+            expected_cookie_file = get_expected_cookie_file_path()
+            cookie_file = get_cookie_file_path()
+            if cookie_file:
+                self.append_log(f"cookies.txt encontrado: {cookie_file}")
+            else:
+                self.append_log(
+                    f"cookies.txt nao encontrado ou vazio em: {expected_cookie_file}"
+                )
+                self.append_log(
+                    "O app nao vai tentar ler cookies do Chrome. Downloads bloqueados pelo YouTube podem falhar."
                 )
 
             playlist_name, tracks = extract_playlist_data(playlist_url, self.append_log)

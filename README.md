@@ -138,13 +138,27 @@ dist/
 `-- cookies.txt
 ```
 
+Ao iniciar, o app verifica esse arquivo e mostra uma luz de status na tela:
+
+```text
+verde    cookies detectados
+vermelha cookies nao detectados
+```
+
+Se o arquivo nao existir ou estiver vazio, o app segue sem cookies e nao tenta ler os cookies do Chrome automaticamente. Use o botao `Abrir pasta` da tela principal para abrir exatamente o local onde o arquivo deve ficar.
+
 ### Como gerar o `cookies.txt` pelo navegador
 
 1. Abra o Chrome.
 2. Entre no site do YouTube e confirme que voce esta logado na sua conta.
-3. Instale uma extensao que exporte cookies no formato Netscape, por exemplo uma extensao chamada `cookies.txt` ou `Get cookies.txt LOCALLY`.
+3. Instale a extensao `Get cookies.txt LOCALLY`:
+
+   ```text
+   https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc
+   ```
+
 4. Com o YouTube aberto, clique no icone da extensao.
-5. Exporte ou baixe os cookies do site atual em formato `.txt`.
+5. Exporte ou baixe os cookies no formato Netscape.
 6. Renomeie o arquivo baixado para exatamente:
 
    ```text
