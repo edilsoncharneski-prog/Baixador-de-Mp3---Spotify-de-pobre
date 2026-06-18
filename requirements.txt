@@ -1,7 +1,6 @@
-yt-dlp
-requests
-beautifulsoup4
-customtkinter
-pyinstaller
-
-# Lembrete: o FFmpeg deve estar instalado no sistema operacional.
+yt-dlp>=2026.6.9
+requests>=2.34.2
+beautifulsoup4>=4.15.0
+customtkinter>=5.2.2
+pyinstaller>=6.20.0
+pillow>=12.2.0
