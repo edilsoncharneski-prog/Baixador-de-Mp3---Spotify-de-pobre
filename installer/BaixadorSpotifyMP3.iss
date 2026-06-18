@@ -1,5 +1,5 @@
 #define MyAppName "Baixador Spotify MP3"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Edilson Charneski"
 #define MyAppExeName "BaixadorSpotifyMP3.exe"
 
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\release
-OutputBaseFilename=BaixadorSpotifyMP3_Setup
+OutputBaseFilename=BaixadorSpotifyMP3_Setup_v{#MyAppVersion}
 SetupIconFile=..\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma

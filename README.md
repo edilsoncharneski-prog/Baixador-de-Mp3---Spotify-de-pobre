@@ -40,11 +40,19 @@ O fluxo principal e simples: cole o link da playlist, escolha a pasta de destino
    [Pasta escolhida]/[Nome da Playlist]/
    ```
 
-Por padrao, a pasta base sugerida e:
+Por padrao, as musicas sao salvas em uma pasta gravavel do usuario:
 
 ```text
-musicas_pendrive/
+Musicas/Baixador Spotify MP3/
 ```
+
+No Windows em ingles, esse caminho normalmente aparece como:
+
+```text
+C:\Users\SEU_USUARIO\Music\Baixador Spotify MP3
+```
+
+O usuario tambem pode escolher outra pasta pela interface antes de iniciar o download.
 
 ## Requisitos
 
@@ -129,7 +137,7 @@ dist/BaixadorSpotifyMP3.exe
 Para usuarios que nao querem instalar Python, o executavel pode ser disponibilizado na aba Releases do GitHub:
 
 ```text
-GitHub > Releases > BaixadorSpotifyMP3_Setup.exe
+GitHub > Releases > BaixadorSpotifyMP3_Setup_v1.0.1.exe
 ```
 
 O executavel e o instalador sao artefatos de distribuicao. Eles nao ficam commitados no repositorio; o repositorio guarda apenas o codigo-fonte e os arquivos de build necessarios para que outro desenvolvedor consiga gerar tudo localmente.
@@ -159,12 +167,12 @@ Nunca publique `cookies.txt` junto com o executavel, instalador, commits ou rele
 4. O instalador final sera salvo em:
 
    ```text
-   release/BaixadorSpotifyMP3_Setup.exe
+   release/BaixadorSpotifyMP3_Setup_v1.0.1.exe
    ```
 
 O instalador nao inclui `cookies.txt`.
 
-O arquivo final `release/BaixadorSpotifyMP3_Setup.exe` deve ser publicado apenas em GitHub Releases, nao versionado no codigo-fonte.
+O arquivo final `release/BaixadorSpotifyMP3_Setup_v1.0.1.exe` deve ser publicado apenas em GitHub Releases, nao versionado no codigo-fonte.
 
 ## Autenticacao do YouTube com cookies.txt
 
@@ -213,7 +221,7 @@ Se o arquivo nao existir ou estiver vazio, o app segue sem cookies e nao tenta l
 
 No Windows, confira se as extensoes de arquivo estao visiveis. Se o arquivo ficar como `cookies.txt.txt`, o app nao vai reconhecer.
 
-Na execucao pelo terminal, coloque o `cookies.txt` na raiz do projeto. Esse arquivo e privado e esta protegido pelo `.gitignore`.
+Na execucao pelo terminal, coloque o `cookies.txt` na raiz do projeto. No app instalado, coloque o `cookies.txt` ao lado do executavel instalado. Esse arquivo e privado, esta protegido pelo `.gitignore` e nunca deve ser publicado.
 
 Se o log mostrar `Requested format is not available`, o YouTube pode ter entregue apenas formatos de imagem/storyboard. O app tenta usar Node.js automaticamente para resolver o challenge JavaScript do YouTube.
 

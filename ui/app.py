@@ -23,9 +23,9 @@ from core.youtube import resolve_download_target
 from icon_data import ICON_DATA_BASE64
 
 
-OUTPUT_DIR = "musicas_pendrive"
+DEFAULT_MUSIC_FOLDER_NAME = "Baixador Spotify MP3"
 APP_NAME = "BaixadorSpotifyMP3"
-APP_VERSION = "1.0"
+APP_VERSION = "1.0.1"
 APP_AUTHOR = "Edilson Charneski"
 APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
 APP_USAGE_NOTE = (
@@ -73,6 +73,12 @@ def get_external_base_path() -> Path:
 
 def get_expected_cookie_file_path() -> Path:
     return get_external_base_path() / "cookies.txt"
+
+
+def get_default_destination_root() -> Path:
+    destination_root = Path.home() / "Music" / DEFAULT_MUSIC_FOLDER_NAME
+    destination_root.mkdir(parents=True, exist_ok=True)
+    return destination_root
 
 
 def get_cookie_file_path() -> Path | None:
@@ -535,7 +541,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
 
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
-        self.destination_root = Path.cwd() / OUTPUT_DIR
+        self.destination_root = get_default_destination_root()
         self.last_output_dir: Path | None = None
         self.cancel_requested = False
 
@@ -755,7 +761,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
 
     def configure_windows_app_id(self) -> None:
         try:
-            app_id = "EdilsonCharneski.BaixadorSpotifyMP3.1.0"
+            app_id = "EdilsonCharneski.BaixadorSpotifyMP3.1.0.1"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
         except Exception:
             pass
@@ -930,7 +936,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         close_button.grid(row=4, column=0, padx=24, pady=(0, 24))
 
     def choose_destination_folder(self) -> None:
-        initial_dir = self.destination_root if self.destination_root.exists() else Path.cwd()
+        initial_dir = self.destination_root if self.destination_root.exists() else get_default_destination_root()
         selected_dir = filedialog.askdirectory(
             title="Escolha a pasta de destino",
             initialdir=str(initial_dir),
@@ -1157,14 +1163,15 @@ class SpotifyDownloaderApp(customtkinter.CTk):
 
 
 def main() -> None:
-    def launch_main() -> None:
+    def close_splash() -> None:
         splash.destroy()
-        app = SpotifyDownloaderApp()
-        app.mainloop()
 
     splash = SplashScreen()
-    splash.after(3000, launch_main)
+    splash.after(3000, close_splash)
     splash.mainloop()
+
+    app = SpotifyDownloaderApp()
+    app.mainloop()
 
 
 if __name__ == "__main__":

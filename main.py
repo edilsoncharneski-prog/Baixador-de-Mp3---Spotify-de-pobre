@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 
 import requests
@@ -11,7 +12,7 @@ from core.file_manager import create_output_dir
 from core.spotify_parser import extract_playlist_tracks
 
 
-OUTPUT_DIR = "musicas_pendrive"
+DEFAULT_OUTPUT_DIR = Path.home() / "Music" / "Baixador Spotify MP3"
 
 
 def main() -> None:
@@ -39,7 +40,7 @@ def main() -> None:
         sys.exit(1)
 
     print("[ETAPA 2/3] Preparando pasta de destino...")
-    dir_path = create_output_dir(OUTPUT_DIR)
+    dir_path = create_output_dir(str(DEFAULT_OUTPUT_DIR))
     print(f"  Pasta: {dir_path}\n")
 
     cookie_file = get_cookie_file_path()
@@ -57,7 +58,7 @@ def main() -> None:
 
     for index, musica in enumerate(musicas, start=1):
         print(f"[{index}/{len(musicas)}]", end=" ")
-        sucesso, msg = download_music(musica, OUTPUT_DIR)
+        sucesso, msg = download_music(musica, dir_path)
 
         if sucesso:
             print("  OK Concluido\n")
