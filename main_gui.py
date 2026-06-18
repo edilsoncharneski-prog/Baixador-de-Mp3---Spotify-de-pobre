@@ -1,3 +1,5 @@
+import base64
+import ctypes
 import json
 import os
 import queue
@@ -14,6 +16,7 @@ import customtkinter
 import requests
 import yt_dlp
 from bs4 import BeautifulSoup
+from icon_data import ICON_DATA_BASE64
 
 
 OUTPUT_DIR = "musicas_pendrive"
@@ -32,6 +35,7 @@ COOKIE_EXTENSION_URL = (
 GOLD = "#d4af37"
 GOLD_HOVER = "#b8941f"
 DARK_PANEL = "#1f1f1f"
+SPLASH_BG = "#1a1a1a"
 COOKIE_OK = "#39d98a"
 COOKIE_MISSING = "#ff4d4f"
 MUTED_TEXT = "#9f9f9f"
@@ -72,6 +76,15 @@ def get_cookie_file_path() -> Path | None:
     if cookie_file.is_file() and cookie_file.stat().st_size > 0:
         return cookie_file
     return None
+
+
+def ensure_icon_file() -> Path:
+    icon_path = get_app_base_path() / "icon.ico"
+    if icon_path.is_file() and icon_path.stat().st_size > 0:
+        return icon_path
+
+    icon_path.write_bytes(base64.b64decode(ICON_DATA_BASE64))
+    return icon_path
 
 
 def get_js_runtime_options(log=None) -> dict:
@@ -451,10 +464,68 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
         return False, f"Erro inesperado: {type(error).__name__}: {error}"
 
 
-class SpotifyDownloaderApp(customtkinter.CTk):
+class SplashScreen(customtkinter.CTk):
     def __init__(self) -> None:
         super().__init__()
 
+        self.geometry("400x250")
+        self.overrideredirect(True)
+        self.configure(fg_color=SPLASH_BG)
+        self.attributes("-alpha", 0.0)
+        self.center_window(400, 250)
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(4, weight=1)
+
+        self.title_label = customtkinter.CTkLabel(
+            self,
+            text="SPOTIFY -> MP3",
+            font=customtkinter.CTkFont(size=28, weight="bold"),
+            text_color=GOLD,
+        )
+        self.title_label.grid(row=1, column=0, padx=36, pady=(20, 6), sticky="ew")
+
+        self.subtitle_label = customtkinter.CTkLabel(
+            self,
+            text="Preparando seu baixador de musicas",
+            font=customtkinter.CTkFont(size=13),
+            text_color=MUTED_TEXT,
+        )
+        self.subtitle_label.grid(row=2, column=0, padx=36, pady=(0, 24), sticky="ew")
+
+        self.progress_bar = customtkinter.CTkProgressBar(
+            self,
+            width=260,
+            height=10,
+            mode="indeterminate",
+            progress_color=GOLD,
+        )
+        self.progress_bar.grid(row=3, column=0, padx=70, pady=(0, 24), sticky="ew")
+        self.progress_bar.start()
+
+        self.fade_in()
+
+    def center_window(self, width: int, height: int) -> None:
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = int((screen_width - width) / 2)
+        y = int((screen_height - height) / 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def fade_in(self, alpha: float = 0.0) -> None:
+        next_alpha = min(alpha + 0.05, 1.0)
+        self.attributes("-alpha", next_alpha)
+        if next_alpha < 1.0:
+            self.after(25, lambda: self.fade_in(next_alpha))
+
+
+class SpotifyDownloaderApp(customtkinter.CTk):
+    def __init__(self) -> None:
+        self.configure_windows_app_id()
+        super().__init__()
+
+        self.configure_window_icon()
         self.title("Spotify Playlist -> MP3")
         self.geometry("920x720")
         self.minsize(760, 640)
@@ -633,6 +704,21 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         self.update_cookie_status()
         self.after(100, self.process_log_queue)
         self.after(2000, self.refresh_cookie_status)
+
+    def configure_windows_app_id(self) -> None:
+        try:
+            app_id = "EdilsonCharneski.BaixadorSpotifyMP3.1.0"
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        except Exception:
+            pass
+
+    def configure_window_icon(self) -> None:
+        try:
+            icon_path = ensure_icon_file()
+            if icon_path.is_file() and icon_path.stat().st_size > 0:
+                self.iconbitmap(str(icon_path))
+        except Exception:
+            pass
 
     def append_log(self, message: str) -> None:
         self.log_queue.put(message)
@@ -964,5 +1050,12 @@ class SpotifyDownloaderApp(customtkinter.CTk):
 
 
 if __name__ == "__main__":
-    app = SpotifyDownloaderApp()
-    app.mainloop()
+    def launch_main() -> None:
+        splash.destroy()
+        app = SpotifyDownloaderApp()
+        app.mainloop()
+
+
+    splash = SplashScreen()
+    splash.after(3000, launch_main)
+    splash.mainloop()

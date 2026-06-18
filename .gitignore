@@ -224,6 +224,8 @@ dist/
 *.spec
 *.exe
 cookies.txt
+icon_original.png
+icon.ico
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe
