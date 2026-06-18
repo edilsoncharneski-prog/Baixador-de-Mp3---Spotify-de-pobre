@@ -16,6 +16,10 @@ import customtkinter
 import requests
 import yt_dlp
 from bs4 import BeautifulSoup
+from core.youtube import (
+    build_youtube_search_terms as build_shared_youtube_search_terms,
+)
+from core.youtube import resolve_download_target
 from icon_data import ICON_DATA_BASE64
 
 
@@ -346,21 +350,7 @@ def split_track_search_query(search_query: str) -> tuple[str, str]:
 
 
 def build_youtube_search_terms(search_query: str) -> list[str]:
-    track_name, artist_name = split_track_search_query(search_query)
-    terms = []
-
-    if track_name and artist_name:
-        terms.append(f"ytsearch1:{track_name} {artist_name}")
-    if track_name:
-        terms.append(f"ytsearch1:{track_name}")
-    terms.append(f"ytsearch1:{search_query.replace(' - ', ' ')}")
-
-    unique_terms = []
-    for term in terms:
-        if term not in unique_terms:
-            unique_terms.append(term)
-
-    return unique_terms
+    return build_shared_youtube_search_terms(search_query)
 
 
 def summarize_download_error(error: Exception, used_cookie_file: bool = False) -> str:
@@ -439,7 +429,20 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
                 try:
                     display_term = search_term.replace("ytsearch1:", "", 1)
                     log(f"  Busca {attempt}: {display_term}")
-                    ydl.download([search_term])
+                    target, title, rejection_reason = resolve_download_target(
+                        ydl,
+                        search_term,
+                        search_query,
+                    )
+                    if not target:
+                        detail = f": {title}" if title else ""
+                        log(f"    {rejection_reason}{detail}")
+                        log("    Resultado nao encontrado. Tentando busca alternativa...")
+                        continue
+
+                    if title:
+                        log(f"    Resultado escolhido: {title[:90]}")
+                    ydl.download([target])
                     return True, "OK"
                 except yt_dlp.utils.DownloadError as error:
                     last_download_error = error

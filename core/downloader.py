@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yt_dlp
 
+from core.youtube import build_youtube_search_terms, resolve_download_target
+
 
 def get_expected_cookie_file_path() -> Path:
     return Path(__file__).resolve().parent.parent / "cookies.txt"
@@ -25,32 +27,6 @@ def get_js_runtime_options() -> dict:
         "js_runtimes": {"node": {}},
         "remote_components": ["ejs:github"],
     }
-
-
-def split_track_search_query(search_query: str) -> tuple[str, str]:
-    if " - " not in search_query:
-        return search_query.strip(), ""
-
-    track_name, artist_name = search_query.split(" - ", 1)
-    return track_name.strip(), artist_name.strip()
-
-
-def build_youtube_search_terms(search_query: str) -> list[str]:
-    track_name, artist_name = split_track_search_query(search_query)
-    terms = []
-
-    if track_name and artist_name:
-        terms.append(f"ytsearch1:{track_name} {artist_name}")
-    if track_name:
-        terms.append(f"ytsearch1:{track_name}")
-    terms.append(f"ytsearch1:{search_query.replace(' - ', ' ')}")
-
-    unique_terms = []
-    for term in terms:
-        if term not in unique_terms:
-            unique_terms.append(term)
-
-    return unique_terms
 
 
 def summarize_download_error(error: Exception, used_cookie_file: bool = False) -> str:
@@ -123,7 +99,20 @@ def download_music(search_query: str, output_dir: str) -> tuple[bool, str]:
 
                 try:
                     print(f"  -> Busca {attempt}: {display_name}")
-                    ydl.download([search_term])
+                    target, title, rejection_reason = resolve_download_target(
+                        ydl,
+                        search_term,
+                        search_query,
+                    )
+                    if not target:
+                        detail = f": {title}" if title else ""
+                        print(f"  -> {rejection_reason}{detail}")
+                        print("  -> Tentando busca alternativa...")
+                        continue
+
+                    if title:
+                        print(f"  -> Resultado escolhido: {title[:70]}")
+                    ydl.download([target])
                     return True, "OK"
                 except yt_dlp.utils.DownloadError as error:
                     last_download_error = error
