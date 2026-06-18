@@ -31,6 +31,7 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+!BaixadorSpotifyMP3.spec
 
 # Installer logs
 pip-log.txt
@@ -221,12 +222,13 @@ __marimo__/
 musicas_pendrive/
 build/
 dist/
-*.spec
+release/
 *.exe
+*.msi
+*.zip
 cookies.txt
+cookies*.txt
 icon_original.png
-icon.ico
 ffmpeg.exe
 ffplay.exe
 ffprobe.exe
-release/

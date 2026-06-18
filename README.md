@@ -112,6 +112,8 @@ python main.py
 
 ## Gerar executavel
 
+Esta secao e voltada para desenvolvedores que clonaram o repositorio e querem gerar o app localmente. Usuarios comuns nao precisam instalar Python nem compilar nada: devem baixar o instalador pronto pela aba Releases do GitHub.
+
 Com `ffmpeg.exe` e `ffprobe.exe` na raiz do projeto, rode:
 
 ```powershell
@@ -127,10 +129,12 @@ dist/BaixadorSpotifyMP3.exe
 Para usuarios que nao querem instalar Python, o executavel pode ser disponibilizado na aba Releases do GitHub:
 
 ```text
-GitHub > Releases > BaixadorSpotifyMP3.exe
+GitHub > Releases > BaixadorSpotifyMP3_Setup.exe
 ```
 
-Nao publique `cookies.txt` junto com o executavel.
+O executavel e o instalador sao artefatos de distribuicao. Eles nao ficam commitados no repositorio; o repositorio guarda apenas o codigo-fonte e os arquivos de build necessarios para que outro desenvolvedor consiga gerar tudo localmente.
+
+Nunca publique `cookies.txt` junto com o executavel, instalador, commits ou releases. Esse arquivo contem dados privados da sessao do navegador do usuario.
 
 ## Gerar instalador com Inno Setup
 
@@ -159,6 +163,8 @@ Nao publique `cookies.txt` junto com o executavel.
    ```
 
 O instalador nao inclui `cookies.txt`.
+
+O arquivo final `release/BaixadorSpotifyMP3_Setup.exe` deve ser publicado apenas em GitHub Releases, nao versionado no codigo-fonte.
 
 ## Autenticacao do YouTube com cookies.txt
 
