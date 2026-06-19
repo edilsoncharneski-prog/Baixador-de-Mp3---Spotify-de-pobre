@@ -21,6 +21,7 @@ import requests
 from bs4 import BeautifulSoup
 from core.youtube import (
     build_youtube_search_terms as build_shared_youtube_search_terms,
+    choose_youtube_result,
 )
 from icon_data import ICON_DATA_BASE64
 
@@ -53,9 +54,9 @@ SPOTIFY_PLAYLIST_QUERY_HASH = (
 )
 SPOTIFY_PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{16,64}$")
 SPOTIFY_URL_PATTERN = re.compile(
-    r"(https?://[^\s<>\"']+|spotify:(?:playlist|album):[A-Za-z0-9]+)"
+    r"(https?://[^\s<>\"']+|spotify:(?:playlist|album|track):[A-Za-z0-9]+)"
 )
-SPOTIFY_COLLECTION_TYPES = {"playlist", "album"}
+SPOTIFY_COLLECTION_TYPES = {"playlist", "album", "track"}
 
 
 customtkinter.set_appearance_mode("dark")
@@ -197,7 +198,7 @@ def normalize_spotify_playlist_url(playlist_url: str, log=None) -> str:
     if match:
         clean_url = match.group(1).rstrip(").,;")
 
-    if clean_url.startswith(("spotify:playlist:", "spotify:album:")):
+    if clean_url.startswith(("spotify:playlist:", "spotify:album:", "spotify:track:")):
         _, collection_type, collection_id = clean_url.split(":", 2)
         if collection_type in SPOTIFY_COLLECTION_TYPES and SPOTIFY_PLAYLIST_ID_PATTERN.match(collection_id):
             return f"https://open.spotify.com/{collection_type}/{collection_id}"
@@ -236,7 +237,7 @@ def extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
 
     if (parsed_url.hostname or "").lower() != "open.spotify.com":
         raise ValueError(
-            "URL invalida. Use um link publico de playlist ou album do Spotify."
+            "URL invalida. Use um link publico de playlist, album ou faixa do Spotify."
         )
 
     if (
@@ -251,7 +252,7 @@ def extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
         return path_parts[1], path_parts[2]
 
     raise ValueError(
-        "URL invalida. Use um link publico de playlist ou album do Spotify."
+        "URL invalida. Use um link publico de playlist, album ou faixa do Spotify."
     )
 
 
@@ -395,33 +396,35 @@ def fetch_all_tracks_from_graphql(playlist_id: str, access_token: str, log) -> l
 
 def extract_playlist_data(playlist_url: str, log) -> tuple[str, str, list[str]]:
     playlist_url = normalize_spotify_playlist_url(playlist_url, log)
-
     collection_type, playlist_id = extract_spotify_collection(playlist_url)
     embed_url = build_embed_playlist_url(playlist_url)
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
     log("Conectando ao Spotify pela pagina embed...")
     response = requests.get(embed_url, headers=headers, timeout=20)
     response.raise_for_status()
     response.encoding = "utf-8"
-
     log("Extraindo dados do Spotify...")
     soup = BeautifulSoup(response.text, "html.parser")
     script_tag = soup.find("script", id="__NEXT_DATA__")
     if not script_tag:
-        raise ValueError(
-            "Nao foi possivel encontrar os dados da playlist. Ela e publica?"
-        )
-
+        raise ValueError("Nao foi possivel encontrar os dados do Spotify. O link e publico?")
     try:
         data = json.loads(script_tag.string)
     except (json.JSONDecodeError, TypeError) as error:
         raise ValueError(f"Erro ao ler JSON do Spotify: {error}") from error
+
+    entity = data["props"]["pageProps"]["state"]["data"]["entity"]
+    if collection_type == "track":
+        track_name = str(entity.get("title") or entity.get("name") or "Spotify")
+        artists = entity.get("artists") or []
+        artist_names = ", ".join(str(artist.get("name")) for artist in artists if isinstance(artist, dict) and artist.get("name"))
+        if not artist_names:
+            artist_names = "Artista desconhecido"
+        duration = entity.get("duration")
+        if duration:
+            log(f"Faixa individual: {track_name} | duracao: {int(duration) // 1000}s")
+        return collection_type, sanitize_folder_name(track_name), [f"{track_name} - {artist_names}"]
 
     playlist_name = "Spotify"
     try:
@@ -447,14 +450,10 @@ def extract_playlist_data(playlist_url: str, log) -> tuple[str, str, list[str]]:
         return collection_type, playlist_name, extract_tracks_from_embed_data(data)
     except (KeyError, TypeError):
         pass
-
     try:
         return collection_type, playlist_name, extract_tracks_from_page_data(data)
     except (KeyError, TypeError) as error:
-        raise ValueError(
-            "Erro ao analisar a estrutura de dados do Spotify. "
-            f"O layout do site pode ter mudado. Detalhes: {error}"
-        ) from error
+        raise ValueError("Erro ao analisar a estrutura de dados do Spotify. " f"O layout do site pode ter mudado. Detalhes: {error}") from error
 
 
 def split_track_search_query(search_query: str) -> tuple[str, str]:
@@ -538,123 +537,121 @@ def get_external_process_env() -> dict[str, str]:
     return env
 
 
-def download_music(search_query: str, output_dir: str, ffmpeg_location: str | None, log) -> tuple[bool, str]:
+def find_youtube_result(yt_dlp_path: Path, search_query: str, cookie_file: Path | None, log, album_name: str = "") -> tuple[str | None, str | None, str]:
+    command = [
+        str(yt_dlp_path), "--default-search", "ytsearch5", "--skip-download",
+        "--dump-single-json", "--no-warnings", f"ytsearch5:{search_query}",
+    ]
+    if cookie_file:
+        command[6:6] = ["--cookies", str(cookie_file)]
+    log(f"  Consultando 5 resultados: {search_query}")
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            shell=False, env=get_external_process_env(), timeout=120, **get_external_process_options(),
+        )
+    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as error:
+        return None, None, f"Erro ao buscar no YouTube: {error}"
+
+    if result.returncode != 0:
+        error_text = "\n".join(part.strip() for part in [result.stdout, result.stderr] if part and part.strip())
+        return None, None, error_text or f"yt-dlp retornou codigo {result.returncode} ao buscar."
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        return None, None, f"Resposta de busca invalida do yt-dlp: {error}"
+
+    entries = payload.get("entries", []) if isinstance(payload, dict) else []
+    selected, scored = choose_youtube_result(entries, search_query, album_name)
+    for index, item in enumerate(scored, start=1):
+        entry = item["entry"]
+        channel = entry.get("channel") or entry.get("uploader") or "-"
+        log(f"  Resultado {index}: titulo={entry.get('title') or '-'} | canal={channel} | score={item['score']}")
+    if not selected:
+        return None, None, "Nenhum resultado com URL valida foi encontrado."
+
+    entry = selected["entry"]
+    channel = entry.get("channel") or entry.get("uploader") or "-"
+    log(f"  Resultado escolhido: titulo={entry.get('title') or '-'} | canal={channel} | score={selected['score']}")
+    return selected["target"], str(entry.get("title") or ""), ""
+
+
+def download_music(
+    search_query: str,
+    output_dir: str,
+    ffmpeg_location: str | None,
+    log,
+    source_album: str = "",
+) -> tuple[bool, str]:
     output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
     yt_dlp_path = get_yt_dlp_executable()
     if not yt_dlp_path:
-        return (
-            False,
-            "yt-dlp.exe nao foi encontrado. Reinstale o app ou instale o yt-dlp no ambiente.",
-        )
+        return False, "yt-dlp.exe nao foi encontrado. Reinstale o app ou instale o yt-dlp no ambiente."
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     cookie_file = get_cookie_file_path()
     using_cookie_file = bool(cookie_file)
-
-    last_error_text = ""
     log(f"  URL/processamento: {search_query}")
     log(f"  Pasta de saida: {output_path}")
 
-    for attempt, search_term in enumerate(build_youtube_search_terms(search_query), start=1):
-        display_term = search_term.replace("ytsearch1:", "", 1)
-        cookie_modes = [cookie_file] if cookie_file else [None]
-        if cookie_file:
-            cookie_modes.append(None)
+    target_url, _, search_error = find_youtube_result(
+        yt_dlp_path, search_query, cookie_file, log, source_album
+    )
+    if not target_url and cookie_file:
+        log("  Busca com cookies falhou; repetindo a consulta sem cookies.")
+        target_url, _, search_error = find_youtube_result(
+            yt_dlp_path, search_query, None, log, source_album
+        )
+    if not target_url:
+        log(f"  Falha ao escolher resultado: {shorten_error(search_error)}")
+        return False, summarize_download_error(search_error, using_cookie_file)
 
-        for cookie_mode_index, cookie_path in enumerate(cookie_modes, start=1):
-            extractor_args = None
-            command = [
-                str(yt_dlp_path),
-                "--default-search",
-                "ytsearch1",
-                "--format",
-                "bestaudio/best",
-                "--check-formats",
-                "--extract-audio",
-                "--audio-format",
-                "mp3",
-                "--audio-quality",
-                "192K",
-                "--no-playlist",
-                "--no-warnings",
-                "--windows-filenames",
-                "--output",
-                output_template,
-            ]
-            if extractor_args:
-                command.extend(["--extractor-args", extractor_args])
-            if ffmpeg_location:
-                command.extend(["--ffmpeg-location", ffmpeg_location])
-            if cookie_path:
-                command.extend(["--cookies", str(cookie_path)])
-            command.append(search_term)
-
-            safe_command = " ".join(f'"{part}"' if " " in part else part for part in command)
-            log(f"  Busca {attempt}: {display_term}")
-            if cookie_file and cookie_mode_index == 2:
-                log("  Repetindo sem cookies porque o YouTube nao entregou formato valido com cookies.")
-            log(f"  Comando externo: {safe_command}")
-
-            try:
-                result = subprocess.run(
-                    command,
-                    cwd=str(output_path),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    shell=False,
-                    env=get_external_process_env(),
-                    timeout=1800,
-                    **get_external_process_options(),
-                )
-            except FileNotFoundError:
-                return False, f"Executavel nao encontrado: {yt_dlp_path}"
-            except PermissionError as error:
-                return False, f"Sem permissao para executar ou gravar em {output_path}: {error}"
-            except subprocess.TimeoutExpired as error:
-                return False, f"Timeout no yt-dlp apos {error.timeout} segundos."
-
-            combined_output = "\n".join(
-                part.strip() for part in [result.stdout, result.stderr] if part and part.strip()
+    last_error_text = ""
+    cookie_modes = [cookie_file] if cookie_file else [None]
+    if cookie_file:
+        cookie_modes.append(None)
+    for cookie_mode_index, cookie_path in enumerate(cookie_modes, start=1):
+        command = [
+            str(yt_dlp_path), "--format", "bestaudio/best", "--check-formats",
+            "--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K",
+            "--no-playlist", "--no-warnings", "--windows-filenames", "--output", output_template,
+        ]
+        if ffmpeg_location:
+            command.extend(["--ffmpeg-location", ffmpeg_location])
+        if cookie_path:
+            command.extend(["--cookies", str(cookie_path)])
+        command.append(target_url)
+        safe_command = " ".join(f'"{part}"' if " " in part else part for part in command)
+        log(f"  Comando externo: {safe_command}")
+        try:
+            result = subprocess.run(
+                command, cwd=str(output_path), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", shell=False, env=get_external_process_env(),
+                timeout=1800, **get_external_process_options(),
             )
-            if combined_output:
-                for line in combined_output.splitlines()[-18:]:
-                    log(f"    {line}")
+        except FileNotFoundError:
+            return False, f"Executavel nao encontrado: {yt_dlp_path}"
+        except PermissionError as error:
+            return False, f"Sem permissao para executar ou gravar em {output_path}: {error}"
+        except subprocess.TimeoutExpired as error:
+            return False, f"Timeout no yt-dlp apos {error.timeout} segundos."
 
-            if result.returncode == 0:
-                log("    Download concluido e convertido para MP3.")
-                return True, "OK"
+        combined_output = "\n".join(part.strip() for part in [result.stdout, result.stderr] if part and part.strip())
+        if combined_output:
+            for line in combined_output.splitlines()[-18:]:
+                log(f"    {line}")
+        if result.returncode == 0:
+            log("    Download concluido e convertido para MP3.")
+            return True, "OK"
 
-            last_error_text = combined_output or f"yt-dlp retornou codigo {result.returncode} sem mensagem."
-            log(f"    Falha na etapa yt-dlp/FFmpeg. Codigo: {result.returncode}")
-            log(f"    Erro real: {shorten_error(last_error_text)}")
-
-            if (
-                cookie_path
-                and cookie_file
-                and should_retry_without_cookies(last_error_text)
-                and cookie_mode_index < len(cookie_modes)
-            ):
-                continue
-
-            if (
-                not cookie_path
-                and cookie_file
-                and should_retry_with_cookies(last_error_text)
-            ):
-                log("    O YouTube pediu cookies, mas a tentativa com cookies ja foi feita.")
-
-            if "Sign in to confirm" in last_error_text or "not a bot" in last_error_text:
-                return False, summarize_download_error(last_error_text, using_cookie_file)
-            if (
-                "Could not copy Chrome cookie database" in last_error_text
-                or "Failed to decrypt with DPAPI" in last_error_text
-            ):
-                return False, summarize_download_error(last_error_text, using_cookie_file)
-
-            log("    Tentando busca alternativa...")
+        last_error_text = combined_output or f"yt-dlp retornou codigo {result.returncode} sem mensagem."
+        log(f"    Falha na etapa yt-dlp/FFmpeg. Codigo: {result.returncode}")
+        log(f"    Erro real: {shorten_error(last_error_text)}")
+        if cookie_path and cookie_file and should_retry_without_cookies(last_error_text) and cookie_mode_index < len(cookie_modes):
+            continue
+        if "Sign in to confirm" in last_error_text or "not a bot" in last_error_text:
+            return False, summarize_download_error(last_error_text, using_cookie_file)
 
     return False, summarize_download_error(last_error_text, using_cookie_file)
 
@@ -746,7 +743,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.url_entry = customtkinter.CTkEntry(
             self,
             height=44,
-            placeholder_text="Cole aqui a URL publica da playlist ou album do Spotify",
+            placeholder_text="Cole aqui a URL publica da playlist, album ou faixa do Spotify",
             font=customtkinter.CTkFont(size=14),
             border_color=GOLD,
         )
@@ -754,7 +751,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
         self.playlist_label = customtkinter.CTkLabel(
             self,
-            text="Playlist/Album:\n-",
+            text="Origem:\n-",
             font=customtkinter.CTkFont(size=14, weight="bold"),
             text_color="#d7d7d7",
             justify="left",
@@ -923,7 +920,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
         self.technical_log_checkbox = customtkinter.CTkCheckBox(
             self.log_options_frame,
-            text="Mostrar log técnico",
+            text="Mostrar log tÃ©cnico",
             variable=self.show_technical_log_var,
             onvalue=True,
             offvalue=False,
@@ -941,7 +938,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.log_textbox.grid(row=10, column=0, padx=24, pady=(0, 24), sticky="nsew")
         self.log_textbox.insert(
             "end",
-            "Pronto. Cole a URL da playlist ou album e clique em Iniciar Download.\n",
+            "Pronto. Cole a URL da playlist, album ou faixa e clique em Iniciar Download.\n",
         )
         self.log_textbox.configure(state="disabled")
 
@@ -1199,8 +1196,9 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
     def set_playlist_name(self, playlist_name: str | None, collection_type: str = "playlist") -> None:
         text = playlist_name if playlist_name else "-"
-        label = "Album" if collection_type == "album" else "Playlist"
-        self.after(0, lambda: self.playlist_label.configure(text=f"{label}:\n{text}"))
+        labels = {"playlist": "Playlist", "album": "Album", "track": "Faixa"}
+        label = labels.get(collection_type, "Playlist")
+        self.after(0, lambda: self.playlist_label.configure(text=f"Origem:\n{label}: {text}"))
 
     def set_summary(
         self,
@@ -1211,7 +1209,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         remaining: int = 0,
     ) -> None:
         if status in {"concluido", "cancelado"}:
-            title = "Concluído" if status == "concluido" else "Cancelado"
+            title = "ConcluÃ­do" if status == "concluido" else "Cancelado"
             summary = (
                 f"{title}\n"
                 f"Total: {total}\n"
@@ -1264,7 +1262,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
         playlist_url = self.url_entry.get().strip()
         if not playlist_url:
-            self.append_log("Informe a URL da playlist ou album antes de iniciar.")
+            self.append_log("Informe a URL da playlist, album ou faixa antes de iniciar.")
             return
 
         destination_text = self.destination_entry.get().strip()
@@ -1333,9 +1331,9 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                 self.append_log("Nenhuma musica encontrada.")
                 return
 
-            collection_label = "Album" if collection_type == "album" else "Playlist"
+            collection_label = {"playlist": "Playlist", "album": "Album", "track": "Faixa"}.get(collection_type, "Playlist")
             self.set_playlist_name(playlist_name, collection_type)
-            self.append_log(f"{collection_label}:\n{playlist_name}")
+            self.append_log(f"Origem:\n{collection_label}: {playlist_name}")
             self.append_log(f"{len(tracks)} musicas encontradas.")
 
             output_dir = destination_root / playlist_name
@@ -1357,7 +1355,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                     break
 
                 self.set_current_track(track)
-                self.append_log(f"[{index}/{len(tracks)}] Buscando música...")
+                self.append_log(f"[{index}/{len(tracks)}] Buscando mÃºsica...")
                 self.append_log("Resultado encontrado.")
                 self.append_log("Baixando...")
                 self.append_log("Convertendo para MP3...")
@@ -1366,11 +1364,12 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                     str(output_dir),
                     ffmpeg_location,
                     self.append_technical_log,
+                    playlist_name if collection_type == "album" else "",
                 )
 
                 if success:
                     successes += 1
-                    self.append_log("Concluído.")
+                    self.append_log("ConcluÃ­do.")
                 else:
                     failures.append((track, message))
                     self.append_log(f"Falhou: {message}")

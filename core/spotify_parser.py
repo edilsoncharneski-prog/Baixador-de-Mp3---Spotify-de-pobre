@@ -12,9 +12,9 @@ SPOTIFY_PLAYLIST_QUERY_HASH = (
 )
 SPOTIFY_PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{16,64}$")
 SPOTIFY_URL_PATTERN = re.compile(
-    r"(https?://[^\s<>\"']+|spotify:(?:playlist|album):[A-Za-z0-9]+)"
+    r"(https?://[^\s<>\"']+|spotify:(?:playlist|album|track):[A-Za-z0-9]+)"
 )
-SPOTIFY_COLLECTION_TYPES = {"playlist", "album"}
+SPOTIFY_COLLECTION_TYPES = {"playlist", "album", "track"}
 
 
 def _normalize_spotify_playlist_url(playlist_url: str) -> str:
@@ -23,7 +23,7 @@ def _normalize_spotify_playlist_url(playlist_url: str) -> str:
     if match:
         clean_url = match.group(1).rstrip(").,;")
 
-    if clean_url.startswith(("spotify:playlist:", "spotify:album:")):
+    if clean_url.startswith(("spotify:playlist:", "spotify:album:", "spotify:track:")):
         _, collection_type, collection_id = clean_url.split(":", 2)
         if collection_type in SPOTIFY_COLLECTION_TYPES and SPOTIFY_PLAYLIST_ID_PATTERN.match(collection_id):
             return f"https://open.spotify.com/{collection_type}/{collection_id}"
@@ -57,7 +57,7 @@ def _extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
 
     if (parsed_url.hostname or "").lower() != "open.spotify.com":
         raise ValueError(
-            "URL invalida. Certifique-se de que e um link de playlist ou album publico do Spotify."
+            "URL invalida. Certifique-se de que e um link de playlist, album ou faixa publica do Spotify."
         )
 
     if (
@@ -72,7 +72,7 @@ def _extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
         return path_parts[1], path_parts[2]
 
     raise ValueError(
-        "URL invalida. Certifique-se de que e um link de playlist ou album publico do Spotify."
+        "URL invalida. Certifique-se de que e um link de playlist, album ou faixa publica do Spotify."
     )
 
 
@@ -205,7 +205,7 @@ def _fetch_all_tracks_from_graphql(playlist_id: str, access_token: str) -> list[
 
 def extract_playlist_tracks(playlist_url: str) -> list[str]:
     """
-    Extrai a lista de "Musica - Artista" de uma playlist ou album publico do Spotify
+    Extrai a lista de "Musica - Artista" de uma playlist, album ou faixa publica do Spotify
     atraves do parsing do HTML da pagina embed (bloco __NEXT_DATA__).
     """
     playlist_url = _normalize_spotify_playlist_url(playlist_url)
@@ -240,6 +240,17 @@ def extract_playlist_tracks(playlist_url: str) -> list[str]:
             "Erro ao analisar a estrutura de dados do Spotify. "
             f"O layout do site pode ter mudado. Detalhes: {error}"
         ) from error
+
+    if collection_type == "track":
+        entity = data["props"]["pageProps"]["state"]["data"]["entity"]
+        track_name = entity.get("title") or entity.get("name")
+        artists = entity.get("artists") or []
+        artist_names = ", ".join(
+            artist.get("name", "") for artist in artists if isinstance(artist, dict)
+        )
+        if not track_name or not artist_names:
+            raise ValueError("Nao foi possivel extrair os dados da faixa do Spotify.")
+        return [f"{track_name} - {artist_names}"]
 
     try:
         access_token = _extract_access_token_from_embed_data(data)
