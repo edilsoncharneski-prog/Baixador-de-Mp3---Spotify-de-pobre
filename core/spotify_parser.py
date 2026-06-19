@@ -10,13 +10,49 @@ SPOTIFY_PLAYLIST_QUERY_URL = "https://api-partner.spotify.com/pathfinder/v1/quer
 SPOTIFY_PLAYLIST_QUERY_HASH = (
     "908a5597b4d0af0489a9ad6a2d41bc3b416ff47c0884016d92bbd6822d0eb6d8"
 )
+SPOTIFY_PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{16,64}$")
+SPOTIFY_URL_PATTERN = re.compile(r"(https?://[^\s<>\"']+|spotify:playlist:[A-Za-z0-9]+)")
+
+
+def _normalize_spotify_playlist_url(playlist_url: str) -> str:
+    clean_url = playlist_url.strip().strip('"').strip("'")
+    match = SPOTIFY_URL_PATTERN.search(clean_url)
+    if match:
+        clean_url = match.group(1).rstrip(").,;")
+
+    if clean_url.startswith("spotify:playlist:"):
+        playlist_id = clean_url.split(":")[-1]
+        if SPOTIFY_PLAYLIST_ID_PATTERN.match(playlist_id):
+            return f"https://open.spotify.com/playlist/{playlist_id}"
+
+    parsed_url = urlparse(clean_url)
+    hostname = (parsed_url.hostname or "").lower()
+    if hostname == "open.spotify.com":
+        return clean_url
+
+    if hostname.endswith("spotify.com") or hostname.endswith("spotify.link"):
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        }
+        try:
+            response = requests.get(clean_url, headers=headers, timeout=10, allow_redirects=True)
+            response.close()
+            return response.url.strip() or clean_url
+        except requests.exceptions.RequestException:
+            return clean_url
+
+    return clean_url
 
 
 def _extract_playlist_id(playlist_url: str) -> str:
-    parsed_url = urlparse(playlist_url)
+    normalized_url = _normalize_spotify_playlist_url(playlist_url)
+    parsed_url = urlparse(normalized_url)
     path_parts = [part for part in parsed_url.path.split("/") if part]
 
-    if parsed_url.netloc != "open.spotify.com":
+    if (parsed_url.hostname or "").lower() != "open.spotify.com":
         raise ValueError(
             "URL invalida. Certifique-se de que e um link de playlist publico do Spotify."
         )
@@ -160,10 +196,7 @@ def extract_playlist_tracks(playlist_url: str) -> list[str]:
     Extrai a lista de "Musica - Artista" de uma playlist publica do Spotify
     atraves do parsing do HTML da pagina embed (bloco __NEXT_DATA__).
     """
-    if not re.match(r"https?://open\.spotify\.com/", playlist_url):
-        raise ValueError(
-            "URL invalida. Certifique-se de que e um link de playlist publico do Spotify."
-        )
+    playlist_url = _normalize_spotify_playlist_url(playlist_url)
     playlist_id = _extract_playlist_id(playlist_url)
     embed_url = _build_embed_playlist_url(playlist_url)
 
