@@ -28,7 +28,7 @@ from icon_data import ICON_DATA_BASE64
 DEFAULT_MUSIC_FOLDER_NAME = "Biblioteca Offline"
 APP_NAME = "Biblioteca Offline"
 APP_EXECUTABLE_NAME = "BibliotecaOffline"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 APP_AUTHOR = "Edilson Charneski"
 APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
 APP_USAGE_NOTE = (

@@ -1,5 +1,5 @@
 #define MyAppName "Biblioteca Offline"
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.4"
 #define MyAppPublisher "Edilson Charneski"
 #define MyAppExeName "BibliotecaOffline.exe"
 
