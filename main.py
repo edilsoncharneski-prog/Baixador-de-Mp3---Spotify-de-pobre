@@ -12,12 +12,12 @@ from core.file_manager import create_output_dir
 from core.spotify_parser import extract_playlist_tracks
 
 
-DEFAULT_OUTPUT_DIR = Path.home() / "Music" / "Baixador Spotify MP3"
+DEFAULT_OUTPUT_DIR = Path.home() / "Music" / "Biblioteca Offline"
 
 
 def main() -> None:
     print("=" * 60)
-    print("   SPOTIFY PLAYLIST -> MP3 (PENDRIVE)")
+    print("   BIBLIOTECA OFFLINE")
     print("=" * 60)
 
     playlist_url = input("\nCole a URL da playlist publica do Spotify aqui: ").strip()

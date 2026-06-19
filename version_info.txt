@@ -1,8 +1,8 @@
 # UTF-8
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 1, 0),
-    prodvers=(1, 0, 1, 0),
+    filevers=(1, 0, 2, 0),
+    prodvers=(1, 0, 2, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,13 +16,13 @@ VSVersionInfo(
         '040904B0',
         [
           StringStruct('CompanyName', 'Edilson Charneski'),
-          StringStruct('FileDescription', 'Baixador Spotify MP3'),
-          StringStruct('FileVersion', '1.0.1'),
-          StringStruct('InternalName', 'BaixadorSpotifyMP3'),
+          StringStruct('FileDescription', 'Biblioteca Offline'),
+          StringStruct('FileVersion', '1.0.2'),
+          StringStruct('InternalName', 'BibliotecaOffline'),
           StringStruct('LegalCopyright', 'Copyright (c) 2026 Edilson Charneski'),
-          StringStruct('OriginalFilename', 'BaixadorSpotifyMP3.exe'),
-          StringStruct('ProductName', 'Baixador Spotify MP3'),
-          StringStruct('ProductVersion', '1.0.1')
+          StringStruct('OriginalFilename', 'BibliotecaOffline.exe'),
+          StringStruct('ProductName', 'Biblioteca Offline'),
+          StringStruct('ProductVersion', '1.0.2')
         ]
       )
     ]),

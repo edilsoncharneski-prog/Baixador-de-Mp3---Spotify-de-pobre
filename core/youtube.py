@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import yt_dlp
+from typing import Any
 
 
 BAD_RESULT_TERMS = [
@@ -62,7 +62,7 @@ def contains_bad_result_term(title: str, original_query: str) -> bool:
 
 
 def resolve_download_target(
-    ydl: yt_dlp.YoutubeDL,
+    ydl: Any,
     search_term: str,
     original_query: str,
 ) -> tuple[str | None, str | None, str | None]:

@@ -1,7 +1,7 @@
-#define MyAppName "Baixador Spotify MP3"
-#define MyAppVersion "1.0.1"
+#define MyAppName "Biblioteca Offline"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "Edilson Charneski"
-#define MyAppExeName "BaixadorSpotifyMP3.exe"
+#define MyAppExeName "BibliotecaOffline.exe"
 
 [Setup]
 AppId={{D1D4192F-16B2-48A7-B93C-F772E57A3CF2}
@@ -12,7 +12,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\release
-OutputBaseFilename=BaixadorSpotifyMP3_Setup_v{#MyAppVersion}
+OutputBaseFilename=BibliotecaOffline_Setup_v{#MyAppVersion}
 SetupIconFile=..\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma

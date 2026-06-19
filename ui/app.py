@@ -5,27 +5,29 @@ import os
 import queue
 import re
 import shutil
+import subprocess
 import sys
+import sysconfig
 import threading
 import tkinter.filedialog as filedialog
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 import customtkinter
 import requests
-import yt_dlp
 from bs4 import BeautifulSoup
 from core.youtube import (
     build_youtube_search_terms as build_shared_youtube_search_terms,
 )
-from core.youtube import resolve_download_target
 from icon_data import ICON_DATA_BASE64
 
 
-DEFAULT_MUSIC_FOLDER_NAME = "Baixador Spotify MP3"
-APP_NAME = "BaixadorSpotifyMP3"
-APP_VERSION = "1.0.1"
+DEFAULT_MUSIC_FOLDER_NAME = "Biblioteca Offline"
+APP_NAME = "Biblioteca Offline"
+APP_EXECUTABLE_NAME = "BibliotecaOffline"
+APP_VERSION = "1.0.2"
 APP_AUTHOR = "Edilson Charneski"
 APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
 APP_USAGE_NOTE = (
@@ -71,8 +73,16 @@ def get_external_base_path() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def get_user_data_path() -> Path:
+    return Path.home() / "Music" / APP_NAME
+
+
 def get_expected_cookie_file_path() -> Path:
-    return get_external_base_path() / "cookies.txt"
+    return get_user_data_path() / "cookies.txt"
+
+
+def get_log_file_path() -> Path:
+    return get_user_data_path() / f"{APP_EXECUTABLE_NAME}.log"
 
 
 def get_default_destination_root() -> Path:
@@ -81,11 +91,44 @@ def get_default_destination_root() -> Path:
     return destination_root
 
 
+def normalize_destination_path(destination_text: str) -> Path:
+    clean_text = destination_text.strip().strip('"')
+    if re.match(r"^[A-Za-z]:[^\\/]", clean_text):
+        clean_text = f"{clean_text[:2]}\\{clean_text[2:]}"
+    return Path(clean_text).expanduser()
+
+
 def get_cookie_file_path() -> Path | None:
     cookie_file = get_expected_cookie_file_path()
     if cookie_file.is_file() and cookie_file.stat().st_size > 0:
         return cookie_file
     return None
+
+
+def migrate_legacy_cookie_file(log=None) -> None:
+    expected_cookie_file = get_expected_cookie_file_path()
+    legacy_cookie_files = [
+        get_external_base_path() / "cookies.txt",
+    ]
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        legacy_cookie_files.append(Path(appdata) / APP_NAME / "cookies.txt")
+
+    if expected_cookie_file.exists():
+        return
+
+    for legacy_cookie_file in legacy_cookie_files:
+        if not legacy_cookie_file.is_file():
+            continue
+        try:
+            expected_cookie_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_cookie_file, expected_cookie_file)
+            if log:
+                log(f"cookies.txt migrado para: {expected_cookie_file}")
+            return
+        except OSError as error:
+            if log:
+                log(f"Nao foi possivel migrar cookies.txt: {error}")
 
 
 def ensure_icon_file() -> Path:
@@ -97,18 +140,33 @@ def ensure_icon_file() -> Path:
     return icon_path
 
 
-def get_js_runtime_options(log=None) -> dict:
-    if not shutil.which("node"):
-        if log:
-            log("  Node.js nao encontrado. Alguns videos podem falhar no challenge do YouTube.")
-        return {}
+def find_executable(candidates: list[str], extra_dirs: list[Path] | None = None) -> Path | None:
+    search_dirs = [
+        get_app_base_path(),
+        get_external_base_path(),
+        Path(__file__).resolve().parent.parent,
+    ]
+    if extra_dirs:
+        search_dirs.extend(extra_dirs)
 
-    if log:
-        log("  Node.js detectado. Ativando solver JS do YouTube.")
-    return {
-        "js_runtimes": {"node": {}},
-        "remote_components": ["ejs:github"],
-    }
+    for directory in search_dirs:
+        for candidate in candidates:
+            executable_path = directory / candidate
+            if executable_path.is_file():
+                return executable_path
+
+    for candidate in candidates:
+        found_path = shutil.which(candidate)
+        if found_path:
+            return Path(found_path)
+
+    return None
+
+
+def get_yt_dlp_executable() -> Path | None:
+    scripts_path = sysconfig.get_path("scripts")
+    extra_dirs = [Path(scripts_path)] if scripts_path else []
+    return find_executable(["yt-dlp.exe", "yt-dlp"], extra_dirs)
 
 
 def get_ffmpeg_location() -> str | None:
@@ -299,6 +357,7 @@ def extract_playlist_data(playlist_url: str, log) -> tuple[str, list[str]]:
     log("Conectando ao Spotify pela pagina embed...")
     response = requests.get(embed_url, headers=headers, timeout=20)
     response.raise_for_status()
+    response.encoding = "utf-8"
 
     log("Extraindo dados da playlist...")
     soup = BeautifulSoup(response.text, "html.parser")
@@ -359,8 +418,7 @@ def build_youtube_search_terms(search_query: str) -> list[str]:
     return build_shared_youtube_search_terms(search_query)
 
 
-def summarize_download_error(error: Exception, used_cookie_file: bool = False) -> str:
-    error_text = str(error)
+def summarize_download_error(error_text: str, used_cookie_file: bool = False) -> str:
     if "Sign in to confirm" in error_text or "not a bot" in error_text:
         if used_cookie_file:
             return (
@@ -384,93 +442,170 @@ def summarize_download_error(error: Exception, used_cookie_file: bool = False) -
     return "Video nao encontrado ou bloqueado no YouTube."
 
 
-def shorten_error(error: Exception) -> str:
-    error_text = re.sub(r"\s+", " ", str(error)).strip()
+def shorten_error(error_text: str) -> str:
+    error_text = re.sub(r"\s+", " ", error_text).strip()
     error_text = error_text.replace("ERROR: ", "")
-    return error_text[:260]
+    return error_text[:700]
+
+
+def should_retry_with_cookies(error_text: str) -> bool:
+    retry_markers = [
+        "Sign in to confirm",
+        "not a bot",
+        "confirm your age",
+        "This video may be inappropriate",
+        "HTTP Error 429",
+        "Too Many Requests",
+    ]
+    return any(marker in error_text for marker in retry_markers)
+
+
+def should_retry_without_cookies(error_text: str) -> bool:
+    retry_markers = [
+        "Requested format is not available",
+        "HTTP Error 403",
+        "Forbidden",
+    ]
+    return any(marker in error_text for marker in retry_markers)
+
+
+def get_external_process_options() -> dict:
+    options = {"creationflags": 0}
+    if os.name == "nt":
+        options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        options["startupinfo"] = startupinfo
+    return options
+
+
+def get_external_process_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 def download_music(search_query: str, output_dir: str, ffmpeg_location: str | None, log) -> tuple[bool, str]:
     output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
+    yt_dlp_path = get_yt_dlp_executable()
+    if not yt_dlp_path:
+        return (
+            False,
+            "yt-dlp.exe nao foi encontrado. Reinstale o app ou instale o yt-dlp no ambiente.",
+        )
 
-    def progress_hook(status: dict) -> None:
-        if status.get("status") == "downloading":
-            percent = status.get("_percent_str", "").strip()
-            speed = status.get("_speed_str", "").strip()
-            if percent:
-                log(f"    Baixando: {percent} {speed}".rstrip())
-        elif status.get("status") == "finished":
-            log("    Download concluido. Convertendo para MP3...")
-
-    ydl_opts = {
-        "default_search": "ytsearch1",
-        "format": "bestaudio/best",
-        "outtmpl": output_template,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }
-        ],
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": False,
-        "progress_hooks": [progress_hook],
-    }
-
-    if ffmpeg_location:
-        ydl_opts["ffmpeg_location"] = ffmpeg_location
-    ydl_opts.update(get_js_runtime_options(log))
-
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
     cookie_file = get_cookie_file_path()
     using_cookie_file = bool(cookie_file)
-    if cookie_file:
-        ydl_opts["cookiefile"] = str(cookie_file)
 
-    last_download_error = None
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            for attempt, search_term in enumerate(build_youtube_search_terms(search_query), start=1):
-                try:
-                    display_term = search_term.replace("ytsearch1:", "", 1)
-                    log(f"  Busca {attempt}: {display_term}")
-                    target, title, rejection_reason = resolve_download_target(
-                        ydl,
-                        search_term,
-                        search_query,
-                    )
-                    if not target:
-                        detail = f": {title}" if title else ""
-                        log(f"    {rejection_reason}{detail}")
-                        log("    Resultado nao encontrado. Tentando busca alternativa...")
-                        continue
+    last_error_text = ""
+    log(f"  URL/processamento: {search_query}")
+    log(f"  Pasta de saida: {output_path}")
 
-                    if title:
-                        log(f"    Resultado escolhido: {title[:90]}")
-                    ydl.download([target])
-                    return True, "OK"
-                except yt_dlp.utils.DownloadError as error:
-                    last_download_error = error
-                    if "Sign in to confirm" in str(error) or "not a bot" in str(error):
-                        return False, summarize_download_error(error, using_cookie_file)
-                    if (
-                        "Could not copy Chrome cookie database" in str(error)
-                        or "Failed to decrypt with DPAPI" in str(error)
-                    ):
-                        return False, summarize_download_error(error, using_cookie_file)
-                    log(f"    Erro do yt-dlp: {shorten_error(error)}")
-                    log("    Resultado nao encontrado. Tentando busca alternativa...")
+    for attempt, search_term in enumerate(build_youtube_search_terms(search_query), start=1):
+        display_term = search_term.replace("ytsearch1:", "", 1)
+        cookie_modes = [cookie_file] if cookie_file else [None]
+        if cookie_file:
+            cookie_modes.append(None)
 
-        if last_download_error:
-            raise last_download_error
-        return True, "OK"
-    except yt_dlp.utils.DownloadError as error:
-        return False, summarize_download_error(error, using_cookie_file)
-    except yt_dlp.utils.PostProcessingError:
-        return False, "Falha na conversao para MP3. Verifique o FFmpeg."
-    except Exception as error:
-        return False, f"Erro inesperado: {type(error).__name__}: {error}"
+        for cookie_mode_index, cookie_path in enumerate(cookie_modes, start=1):
+            extractor_args = None
+            command = [
+                str(yt_dlp_path),
+                "--default-search",
+                "ytsearch1",
+                "--format",
+                "bestaudio/best",
+                "--check-formats",
+                "--extract-audio",
+                "--audio-format",
+                "mp3",
+                "--audio-quality",
+                "192K",
+                "--no-playlist",
+                "--no-warnings",
+                "--restrict-filenames",
+                "--output",
+                output_template,
+            ]
+            if extractor_args:
+                command.extend(["--extractor-args", extractor_args])
+            if ffmpeg_location:
+                command.extend(["--ffmpeg-location", ffmpeg_location])
+            if cookie_path:
+                command.extend(["--cookies", str(cookie_path)])
+            command.append(search_term)
+
+            safe_command = " ".join(f'"{part}"' if " " in part else part for part in command)
+            log(f"  Busca {attempt}: {display_term}")
+            if cookie_file and cookie_mode_index == 2:
+                log("  Repetindo sem cookies porque o YouTube nao entregou formato valido com cookies.")
+            log(f"  Comando externo: {safe_command}")
+
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=str(output_path),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    shell=False,
+                    env=get_external_process_env(),
+                    timeout=1800,
+                    **get_external_process_options(),
+                )
+            except FileNotFoundError:
+                return False, f"Executavel nao encontrado: {yt_dlp_path}"
+            except PermissionError as error:
+                return False, f"Sem permissao para executar ou gravar em {output_path}: {error}"
+            except subprocess.TimeoutExpired as error:
+                return False, f"Timeout no yt-dlp apos {error.timeout} segundos."
+
+            combined_output = "\n".join(
+                part.strip() for part in [result.stdout, result.stderr] if part and part.strip()
+            )
+            if combined_output:
+                for line in combined_output.splitlines()[-18:]:
+                    log(f"    {line}")
+
+            if result.returncode == 0:
+                log("    Download concluido e convertido para MP3.")
+                return True, "OK"
+
+            last_error_text = combined_output or f"yt-dlp retornou codigo {result.returncode} sem mensagem."
+            log(f"    Falha na etapa yt-dlp/FFmpeg. Codigo: {result.returncode}")
+            log(f"    Erro real: {shorten_error(last_error_text)}")
+
+            if (
+                cookie_path
+                and cookie_file
+                and should_retry_without_cookies(last_error_text)
+                and cookie_mode_index < len(cookie_modes)
+            ):
+                continue
+
+            if (
+                not cookie_path
+                and cookie_file
+                and should_retry_with_cookies(last_error_text)
+            ):
+                log("    O YouTube pediu cookies, mas a tentativa com cookies ja foi feita.")
+
+            if "Sign in to confirm" in last_error_text or "not a bot" in last_error_text:
+                return False, summarize_download_error(last_error_text, using_cookie_file)
+            if (
+                "Could not copy Chrome cookie database" in last_error_text
+                or "Failed to decrypt with DPAPI" in last_error_text
+            ):
+                return False, summarize_download_error(last_error_text, using_cookie_file)
+
+            log("    Tentando busca alternativa...")
+
+    return False, summarize_download_error(last_error_text, using_cookie_file)
 
 
 class SplashScreen(customtkinter.CTk):
@@ -489,7 +624,7 @@ class SplashScreen(customtkinter.CTk):
 
         self.title_label = customtkinter.CTkLabel(
             self,
-            text="SPOTIFY -> MP3",
+            text=APP_NAME,
             font=customtkinter.CTkFont(size=28, weight="bold"),
             text_color=GOLD,
         )
@@ -497,7 +632,7 @@ class SplashScreen(customtkinter.CTk):
 
         self.subtitle_label = customtkinter.CTkLabel(
             self,
-            text="Preparando seu baixador de musicas",
+            text="Preparando sua biblioteca offline",
             font=customtkinter.CTkFont(size=13),
             text_color=MUTED_TEXT,
         )
@@ -529,13 +664,13 @@ class SplashScreen(customtkinter.CTk):
             self.after(25, lambda: self.fade_in(next_alpha))
 
 
-class SpotifyDownloaderApp(customtkinter.CTk):
+class BibliotecaOfflineApp(customtkinter.CTk):
     def __init__(self) -> None:
         self.configure_windows_app_id()
         super().__init__()
 
         self.configure_window_icon()
-        self.title("Spotify Playlist -> MP3")
+        self.title(APP_NAME)
         self.geometry("920x720")
         self.minsize(760, 640)
 
@@ -544,13 +679,14 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         self.destination_root = get_default_destination_root()
         self.last_output_dir: Path | None = None
         self.cancel_requested = False
+        self.log_file_path = get_log_file_path()
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(8, weight=1)
 
         self.title_label = customtkinter.CTkLabel(
             self,
-            text="Spotify Playlist -> MP3",
+            text=APP_NAME,
             font=customtkinter.CTkFont(size=26, weight="bold"),
         )
         self.title_label.grid(row=0, column=0, padx=28, pady=(28, 8), sticky="ew")
@@ -761,7 +897,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
 
     def configure_windows_app_id(self) -> None:
         try:
-            app_id = "EdilsonCharneski.BaixadorSpotifyMP3.1.0.1"
+            app_id = f"EdilsonCharneski.BibliotecaOffline.{APP_VERSION}"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
         except Exception:
             pass
@@ -775,9 +911,17 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             pass
 
     def append_log(self, message: str) -> None:
+        try:
+            self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with self.log_file_path.open("a", encoding="utf-8") as log_file:
+                log_file.write(f"[{timestamp}] {message}\n")
+        except OSError:
+            pass
         self.log_queue.put(message)
 
     def update_cookie_status(self) -> None:
+        migrate_legacy_cookie_file()
         cookie_file = get_cookie_file_path()
         if cookie_file:
             self.cookie_status_light.configure(fg_color=COOKIE_OK)
@@ -797,7 +941,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
         self.after(2000, self.refresh_cookie_status)
 
     def open_cookie_folder(self) -> None:
-        cookie_folder = get_external_base_path()
+        cookie_folder = get_user_data_path()
         cookie_folder.mkdir(parents=True, exist_ok=True)
         os.startfile(cookie_folder)
 
@@ -824,7 +968,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             "3. Clique no icone da extensao Get cookies.txt LOCALLY.\n"
             "4. Escolha exportar/baixar em formato Netscape.\n"
             "5. Renomeie o arquivo baixado para exatamente cookies.txt.\n"
-            "6. Coloque esse arquivo na pasta aberta pelo botao Abrir pasta.\n\n"
+            "6. Coloque esse arquivo na pasta aberta pelo botao Abrir pasta de cookies.\n\n"
             "Quando estiver certo, a luz desta tela fica verde e aparece cookies detectados."
         )
         steps_label = customtkinter.CTkLabel(
@@ -1032,7 +1176,9 @@ class SpotifyDownloaderApp(customtkinter.CTk):
             self.append_log("Informe uma pasta de destino antes de iniciar.")
             return
 
-        self.destination_root = Path(destination_text)
+        self.destination_root = normalize_destination_path(destination_text)
+        self.destination_entry.delete(0, "end")
+        self.destination_entry.insert(0, str(self.destination_root))
         self.last_output_dir = None
         self.cancel_requested = False
         self.open_folder_button.configure(state="disabled")
@@ -1050,7 +1196,16 @@ class SpotifyDownloaderApp(customtkinter.CTk):
     def run_download_flow(self, playlist_url: str, destination_root: Path) -> None:
         try:
             self.append_log("=" * 70)
-            self.append_log("Iniciando processo...")
+            self.append_log(f"Iniciando processo no {APP_NAME} v{APP_VERSION}...")
+            self.append_log(f"Log completo: {self.log_file_path}")
+            self.append_log(f"URL processada: {playlist_url}")
+            migrate_legacy_cookie_file(self.append_log)
+
+            yt_dlp_path = get_yt_dlp_executable()
+            if yt_dlp_path:
+                self.append_log(f"yt-dlp localizado em: {yt_dlp_path}")
+            else:
+                self.append_log("yt-dlp.exe nao foi encontrado.")
 
             ffmpeg_location = get_ffmpeg_location()
             if ffmpeg_location:
@@ -1069,7 +1224,7 @@ class SpotifyDownloaderApp(customtkinter.CTk):
                     f"cookies.txt nao encontrado ou vazio em: {expected_cookie_file}"
                 )
                 self.append_log(
-                    "O app nao vai tentar ler cookies do Chrome. Downloads bloqueados pelo YouTube podem falhar."
+                    "O app tentara baixar sem cookies. Se o YouTube bloquear por login/anti-bot, coloque cookies.txt nesse local."
                 )
 
             playlist_name, tracks = extract_playlist_data(playlist_url, self.append_log)
@@ -1170,7 +1325,7 @@ def main() -> None:
     splash.after(3000, close_splash)
     splash.mainloop()
 
-    app = SpotifyDownloaderApp()
+    app = BibliotecaOfflineApp()
     app.mainloop()
 
 

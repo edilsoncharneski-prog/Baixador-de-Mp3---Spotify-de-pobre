@@ -177,6 +177,7 @@ def extract_playlist_tracks(playlist_url: str) -> list[str]:
     print("  -> Conectando ao Spotify...")
     response = requests.get(embed_url, headers=headers, timeout=15)
     response.raise_for_status()
+    response.encoding = "utf-8"
 
     print("  -> Extraindo dados da pagina...")
     soup = BeautifulSoup(response.text, "html.parser")
