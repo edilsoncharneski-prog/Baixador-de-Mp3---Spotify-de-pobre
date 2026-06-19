@@ -1,8 +1,8 @@
 # Biblioteca Offline
 
-Aplicativo em Python para montar uma biblioteca local de musicas em MP3 a partir de uma playlist publica do Spotify. O app le a playlist, monta buscas no YouTube e chama `yt-dlp.exe` diretamente para baixar e converter o audio com FFmpeg.
+Aplicativo em Python para montar uma biblioteca local de musicas em MP3 a partir de uma playlist ou album publico do Spotify. O app le a lista de faixas, monta buscas no YouTube e chama `yt-dlp.exe` diretamente para baixar e converter o audio com FFmpeg.
 
-Versao atual: `v1.0.5`
+Versao atual: `v1.0.6`
 
 ## Recursos
 
@@ -55,7 +55,7 @@ Gerar instalador com Inno Setup:
 
 ```text
 installer/BibliotecaOffline.iss
-release/BibliotecaOffline_Setup_v1.0.5.exe
+release/BibliotecaOffline_Setup_v1.0.6.exe
 ```
 
 ## Cookies
@@ -71,6 +71,10 @@ BibliotecaOffline.log
 ```
 
 ## Changelog
+
+### v1.0.6
+
+- Adiciona suporte a links publicos de album do Spotify.
 
 ### v1.0.5
 

@@ -28,7 +28,7 @@ from icon_data import ICON_DATA_BASE64
 DEFAULT_MUSIC_FOLDER_NAME = "Biblioteca Offline"
 APP_NAME = "Biblioteca Offline"
 APP_EXECUTABLE_NAME = "BibliotecaOffline"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 APP_AUTHOR = "Edilson Charneski"
 APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
 APP_USAGE_NOTE = (
@@ -52,7 +52,10 @@ SPOTIFY_PLAYLIST_QUERY_HASH = (
     "908a5597b4d0af0489a9ad6a2d41bc3b416ff47c0884016d92bbd6822d0eb6d8"
 )
 SPOTIFY_PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{16,64}$")
-SPOTIFY_URL_PATTERN = re.compile(r"(https?://[^\s<>\"']+|spotify:playlist:[A-Za-z0-9]+)")
+SPOTIFY_URL_PATTERN = re.compile(
+    r"(https?://[^\s<>\"']+|spotify:(?:playlist|album):[A-Za-z0-9]+)"
+)
+SPOTIFY_COLLECTION_TYPES = {"playlist", "album"}
 
 
 customtkinter.set_appearance_mode("dark")
@@ -194,10 +197,10 @@ def normalize_spotify_playlist_url(playlist_url: str, log=None) -> str:
     if match:
         clean_url = match.group(1).rstrip(").,;")
 
-    if clean_url.startswith("spotify:playlist:"):
-        playlist_id = clean_url.split(":")[-1]
-        if SPOTIFY_PLAYLIST_ID_PATTERN.match(playlist_id):
-            return f"https://open.spotify.com/playlist/{playlist_id}"
+    if clean_url.startswith(("spotify:playlist:", "spotify:album:")):
+        _, collection_type, collection_id = clean_url.split(":", 2)
+        if collection_type in SPOTIFY_COLLECTION_TYPES and SPOTIFY_PLAYLIST_ID_PATTERN.match(collection_id):
+            return f"https://open.spotify.com/{collection_type}/{collection_id}"
 
     parsed_url = urlparse(clean_url)
     hostname = (parsed_url.hostname or "").lower()
@@ -226,30 +229,39 @@ def normalize_spotify_playlist_url(playlist_url: str, log=None) -> str:
     return clean_url
 
 
-def extract_playlist_id(playlist_url: str) -> str:
+def extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
     normalized_url = normalize_spotify_playlist_url(playlist_url)
     parsed_url = urlparse(normalized_url)
     path_parts = [part for part in parsed_url.path.split("/") if part]
 
     if (parsed_url.hostname or "").lower() != "open.spotify.com":
         raise ValueError(
-            "URL invalida. Use um link publico de playlist do Spotify."
+            "URL invalida. Use um link publico de playlist ou album do Spotify."
         )
 
-    if path_parts[:2] == ["embed", "playlist"] and len(path_parts) >= 3:
-        return path_parts[2]
-    if path_parts[:1] == ["playlist"] and len(path_parts) >= 2:
-        return path_parts[1]
-    if len(path_parts) >= 3 and path_parts[1] == "playlist":
-        return path_parts[2]
+    if (
+        len(path_parts) >= 3
+        and path_parts[0] == "embed"
+        and path_parts[1] in SPOTIFY_COLLECTION_TYPES
+    ):
+        return path_parts[1], path_parts[2]
+    if len(path_parts) >= 2 and path_parts[0] in SPOTIFY_COLLECTION_TYPES:
+        return path_parts[0], path_parts[1]
+    if len(path_parts) >= 3 and path_parts[1] in SPOTIFY_COLLECTION_TYPES:
+        return path_parts[1], path_parts[2]
 
     raise ValueError(
-        "URL invalida. Use um link publico de playlist do Spotify."
+        "URL invalida. Use um link publico de playlist ou album do Spotify."
     )
 
 
+def extract_playlist_id(playlist_url: str) -> str:
+    return extract_spotify_collection(playlist_url)[1]
+
+
 def build_embed_playlist_url(playlist_url: str) -> str:
-    return f"https://open.spotify.com/embed/playlist/{extract_playlist_id(playlist_url)}"
+    collection_type, collection_id = extract_spotify_collection(playlist_url)
+    return f"https://open.spotify.com/embed/{collection_type}/{collection_id}"
 
 
 def sanitize_folder_name(folder_name: str) -> str:
@@ -381,10 +393,10 @@ def fetch_all_tracks_from_graphql(playlist_id: str, access_token: str, log) -> l
     return tracks
 
 
-def extract_playlist_data(playlist_url: str, log) -> tuple[str, list[str]]:
+def extract_playlist_data(playlist_url: str, log) -> tuple[str, str, list[str]]:
     playlist_url = normalize_spotify_playlist_url(playlist_url, log)
 
-    playlist_id = extract_playlist_id(playlist_url)
+    collection_type, playlist_id = extract_spotify_collection(playlist_url)
     embed_url = build_embed_playlist_url(playlist_url)
     headers = {
         "User-Agent": (
@@ -398,7 +410,7 @@ def extract_playlist_data(playlist_url: str, log) -> tuple[str, list[str]]:
     response.raise_for_status()
     response.encoding = "utf-8"
 
-    log("Extraindo dados da playlist...")
+    log("Extraindo dados do Spotify...")
     soup = BeautifulSoup(response.text, "html.parser")
     script_tag = soup.find("script", id="__NEXT_DATA__")
     if not script_tag:
@@ -411,7 +423,7 @@ def extract_playlist_data(playlist_url: str, log) -> tuple[str, list[str]]:
     except (json.JSONDecodeError, TypeError) as error:
         raise ValueError(f"Erro ao ler JSON do Spotify: {error}") from error
 
-    playlist_name = "Playlist Spotify"
+    playlist_name = "Spotify"
     try:
         playlist_name = extract_playlist_name_from_embed_data(data)
     except (KeyError, TypeError):
@@ -421,23 +433,23 @@ def extract_playlist_data(playlist_url: str, log) -> tuple[str, list[str]]:
             pass
 
     access_token = extract_access_token_from_embed_data(data)
-    if access_token:
+    if collection_type == "playlist" and access_token:
         try:
             log("Buscando todas as paginas da playlist...")
             tracks = fetch_all_tracks_from_graphql(playlist_id, access_token, log)
             if tracks:
-                return playlist_name, tracks
+                return collection_type, playlist_name, tracks
         except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as error:
             log(f"  Nao foi possivel paginar pelo Spotify: {shorten_error(error)}")
             log("  Usando lista inicial disponivel no embed.")
 
     try:
-        return playlist_name, extract_tracks_from_embed_data(data)
+        return collection_type, playlist_name, extract_tracks_from_embed_data(data)
     except (KeyError, TypeError):
         pass
 
     try:
-        return playlist_name, extract_tracks_from_page_data(data)
+        return collection_type, playlist_name, extract_tracks_from_page_data(data)
     except (KeyError, TypeError) as error:
         raise ValueError(
             "Erro ao analisar a estrutura de dados do Spotify. "
@@ -734,7 +746,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.url_entry = customtkinter.CTkEntry(
             self,
             height=44,
-            placeholder_text="Cole aqui a URL publica da playlist do Spotify",
+            placeholder_text="Cole aqui a URL publica da playlist ou album do Spotify",
             font=customtkinter.CTkFont(size=14),
             border_color=GOLD,
         )
@@ -742,7 +754,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
         self.playlist_label = customtkinter.CTkLabel(
             self,
-            text="Playlist:\n-",
+            text="Playlist/Album:\n-",
             font=customtkinter.CTkFont(size=14, weight="bold"),
             text_color="#d7d7d7",
             justify="left",
@@ -929,7 +941,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.log_textbox.grid(row=10, column=0, padx=24, pady=(0, 24), sticky="nsew")
         self.log_textbox.insert(
             "end",
-            "Pronto. Cole a URL da playlist e clique em Iniciar Download.\n",
+            "Pronto. Cole a URL da playlist ou album e clique em Iniciar Download.\n",
         )
         self.log_textbox.configure(state="disabled")
 
@@ -1185,9 +1197,10 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         text = track if track else "Nenhum download em andamento."
         self.after(0, lambda: self.current_track_label.configure(text=text))
 
-    def set_playlist_name(self, playlist_name: str | None) -> None:
+    def set_playlist_name(self, playlist_name: str | None, collection_type: str = "playlist") -> None:
         text = playlist_name if playlist_name else "-"
-        self.after(0, lambda: self.playlist_label.configure(text=f"Playlist:\n{text}"))
+        label = "Album" if collection_type == "album" else "Playlist"
+        self.after(0, lambda: self.playlist_label.configure(text=f"{label}:\n{text}"))
 
     def set_summary(
         self,
@@ -1251,7 +1264,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
         playlist_url = self.url_entry.get().strip()
         if not playlist_url:
-            self.append_log("Informe a URL da playlist antes de iniciar.")
+            self.append_log("Informe a URL da playlist ou album antes de iniciar.")
             return
 
         destination_text = self.destination_entry.get().strip()
@@ -1280,7 +1293,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
     def run_download_flow(self, playlist_url: str, destination_root: Path) -> None:
         try:
             self.append_technical_log("=" * 70)
-            self.append_log("Buscando playlist...")
+            self.append_log("Buscando no Spotify...")
             self.append_technical_log(f"Iniciando processo no {APP_NAME} v{APP_VERSION}...")
             self.append_technical_log(f"Log completo: {self.log_file_path}")
             self.append_technical_log(f"URL processada: {playlist_url}")
@@ -1312,19 +1325,23 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                     "O app tentara baixar sem cookies. Se o YouTube bloquear por login/anti-bot, coloque cookies.txt nesse local."
                 )
 
-            playlist_name, tracks = extract_playlist_data(playlist_url, self.append_technical_log)
+            collection_type, playlist_name, tracks = extract_playlist_data(
+                playlist_url,
+                self.append_technical_log,
+            )
             if not tracks:
-                self.append_log("A playlist esta vazia.")
+                self.append_log("Nenhuma musica encontrada.")
                 return
 
-            self.set_playlist_name(playlist_name)
-            self.append_log(f"Playlist:\n{playlist_name}")
+            collection_label = "Album" if collection_type == "album" else "Playlist"
+            self.set_playlist_name(playlist_name, collection_type)
+            self.append_log(f"{collection_label}:\n{playlist_name}")
             self.append_log(f"{len(tracks)} musicas encontradas.")
 
             output_dir = destination_root / playlist_name
             output_dir.mkdir(parents=True, exist_ok=True)
             self.last_output_dir = output_dir
-            self.append_technical_log(f"Preparando pasta da playlist: {output_dir}")
+            self.append_technical_log(f"Preparando pasta de saida: {output_dir}")
             self.append_technical_log("-" * 70)
 
             successes = 0
@@ -1374,7 +1391,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             remaining = max(len(tracks) - completed, 0)
             self.append_technical_log("-" * 70)
             self.append_technical_log("RELATORIO FINAL")
-            self.append_log(f"Total na playlist    : {len(tracks)}")
+            self.append_log(f"Total encontrado     : {len(tracks)}")
             self.append_log(f"Baixadas com sucesso : {successes}")
             self.append_log(f"Falhas               : {len(failures)}")
             if canceled:

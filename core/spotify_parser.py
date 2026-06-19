@@ -11,7 +11,10 @@ SPOTIFY_PLAYLIST_QUERY_HASH = (
     "908a5597b4d0af0489a9ad6a2d41bc3b416ff47c0884016d92bbd6822d0eb6d8"
 )
 SPOTIFY_PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{16,64}$")
-SPOTIFY_URL_PATTERN = re.compile(r"(https?://[^\s<>\"']+|spotify:playlist:[A-Za-z0-9]+)")
+SPOTIFY_URL_PATTERN = re.compile(
+    r"(https?://[^\s<>\"']+|spotify:(?:playlist|album):[A-Za-z0-9]+)"
+)
+SPOTIFY_COLLECTION_TYPES = {"playlist", "album"}
 
 
 def _normalize_spotify_playlist_url(playlist_url: str) -> str:
@@ -20,10 +23,10 @@ def _normalize_spotify_playlist_url(playlist_url: str) -> str:
     if match:
         clean_url = match.group(1).rstrip(").,;")
 
-    if clean_url.startswith("spotify:playlist:"):
-        playlist_id = clean_url.split(":")[-1]
-        if SPOTIFY_PLAYLIST_ID_PATTERN.match(playlist_id):
-            return f"https://open.spotify.com/playlist/{playlist_id}"
+    if clean_url.startswith(("spotify:playlist:", "spotify:album:")):
+        _, collection_type, collection_id = clean_url.split(":", 2)
+        if collection_type in SPOTIFY_COLLECTION_TYPES and SPOTIFY_PLAYLIST_ID_PATTERN.match(collection_id):
+            return f"https://open.spotify.com/{collection_type}/{collection_id}"
 
     parsed_url = urlparse(clean_url)
     hostname = (parsed_url.hostname or "").lower()
@@ -47,30 +50,39 @@ def _normalize_spotify_playlist_url(playlist_url: str) -> str:
     return clean_url
 
 
-def _extract_playlist_id(playlist_url: str) -> str:
+def _extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
     normalized_url = _normalize_spotify_playlist_url(playlist_url)
     parsed_url = urlparse(normalized_url)
     path_parts = [part for part in parsed_url.path.split("/") if part]
 
     if (parsed_url.hostname or "").lower() != "open.spotify.com":
         raise ValueError(
-            "URL invalida. Certifique-se de que e um link de playlist publico do Spotify."
+            "URL invalida. Certifique-se de que e um link de playlist ou album publico do Spotify."
         )
 
-    if path_parts[:2] == ["embed", "playlist"] and len(path_parts) >= 3:
-        return path_parts[2]
-    if path_parts[0:1] == ["playlist"] and len(path_parts) >= 2:
-        return path_parts[1]
-    if len(path_parts) >= 3 and path_parts[1] == "playlist":
-        return path_parts[2]
+    if (
+        len(path_parts) >= 3
+        and path_parts[0] == "embed"
+        and path_parts[1] in SPOTIFY_COLLECTION_TYPES
+    ):
+        return path_parts[1], path_parts[2]
+    if len(path_parts) >= 2 and path_parts[0] in SPOTIFY_COLLECTION_TYPES:
+        return path_parts[0], path_parts[1]
+    if len(path_parts) >= 3 and path_parts[1] in SPOTIFY_COLLECTION_TYPES:
+        return path_parts[1], path_parts[2]
 
     raise ValueError(
-        "URL invalida. Certifique-se de que e um link de playlist publico do Spotify."
+        "URL invalida. Certifique-se de que e um link de playlist ou album publico do Spotify."
     )
 
 
+def _extract_playlist_id(playlist_url: str) -> str:
+    return _extract_spotify_collection(playlist_url)[1]
+
+
 def _build_embed_playlist_url(playlist_url: str) -> str:
-    return f"https://open.spotify.com/embed/playlist/{_extract_playlist_id(playlist_url)}"
+    collection_type, collection_id = _extract_spotify_collection(playlist_url)
+    return f"https://open.spotify.com/embed/{collection_type}/{collection_id}"
 
 
 def _extract_tracks_from_embed_data(data: dict) -> list[str]:
@@ -193,11 +205,11 @@ def _fetch_all_tracks_from_graphql(playlist_id: str, access_token: str) -> list[
 
 def extract_playlist_tracks(playlist_url: str) -> list[str]:
     """
-    Extrai a lista de "Musica - Artista" de uma playlist publica do Spotify
+    Extrai a lista de "Musica - Artista" de uma playlist ou album publico do Spotify
     atraves do parsing do HTML da pagina embed (bloco __NEXT_DATA__).
     """
     playlist_url = _normalize_spotify_playlist_url(playlist_url)
-    playlist_id = _extract_playlist_id(playlist_url)
+    collection_type, playlist_id = _extract_spotify_collection(playlist_url)
     embed_url = _build_embed_playlist_url(playlist_url)
 
     headers = {
@@ -218,7 +230,7 @@ def extract_playlist_tracks(playlist_url: str) -> list[str]:
     script_tag = soup.find("script", id="__NEXT_DATA__")
     if not script_tag:
         raise ValueError(
-            "Nao foi possivel encontrar os dados da playlist. A playlist e realmente publica?"
+            "Nao foi possivel encontrar os dados do Spotify. O link e realmente publico?"
         )
 
     try:
@@ -231,7 +243,7 @@ def extract_playlist_tracks(playlist_url: str) -> list[str]:
 
     try:
         access_token = _extract_access_token_from_embed_data(data)
-        if access_token:
+        if collection_type == "playlist" and access_token:
             print("  -> Buscando todas as paginas da playlist...")
             tracks = _fetch_all_tracks_from_graphql(playlist_id, access_token)
             if tracks:
