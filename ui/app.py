@@ -528,7 +528,7 @@ def download_music(search_query: str, output_dir: str, ffmpeg_location: str | No
                 "192K",
                 "--no-playlist",
                 "--no-warnings",
-                "--restrict-filenames",
+                "--windows-filenames",
                 "--output",
                 output_template,
             ]
