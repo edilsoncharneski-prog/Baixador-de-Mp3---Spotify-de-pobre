@@ -9,6 +9,7 @@ import subprocess
 import sys
 import sysconfig
 import threading
+import tkinter as tk
 import tkinter.filedialog as filedialog
 import webbrowser
 from datetime import datetime
@@ -674,15 +675,16 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.geometry("920x720")
         self.minsize(760, 640)
 
-        self.log_queue: queue.Queue[str] = queue.Queue()
+        self.log_queue: queue.Queue[tuple[str, bool]] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
         self.destination_root = get_default_destination_root()
         self.last_output_dir: Path | None = None
         self.cancel_requested = False
         self.log_file_path = get_log_file_path()
+        self.show_technical_log_var = tk.BooleanVar(value=False)
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(8, weight=1)
+        self.grid_rowconfigure(10, weight=1)
 
         self.title_label = customtkinter.CTkLabel(
             self,
@@ -700,8 +702,18 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         )
         self.url_entry.grid(row=1, column=0, padx=36, pady=(10, 14), sticky="ew")
 
+        self.playlist_label = customtkinter.CTkLabel(
+            self,
+            text="Playlist:\n-",
+            font=customtkinter.CTkFont(size=14, weight="bold"),
+            text_color="#d7d7d7",
+            justify="left",
+            anchor="w",
+        )
+        self.playlist_label.grid(row=2, column=0, padx=36, pady=(0, 12), sticky="ew")
+
         self.destination_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.destination_frame.grid(row=2, column=0, padx=36, pady=(0, 12), sticky="ew")
+        self.destination_frame.grid(row=3, column=0, padx=36, pady=(0, 12), sticky="ew")
         self.destination_frame.grid_columnconfigure(0, weight=1)
 
         self.destination_entry = customtkinter.CTkEntry(
@@ -726,7 +738,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.choose_folder_button.grid(row=0, column=1)
 
         self.cookie_status_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.cookie_status_frame.grid(row=3, column=0, padx=36, pady=(0, 12), sticky="ew")
+        self.cookie_status_frame.grid(row=4, column=0, padx=36, pady=(0, 12), sticky="ew")
         self.cookie_status_frame.grid_columnconfigure(1, weight=1)
 
         self.cookie_status_light = customtkinter.CTkFrame(
@@ -766,7 +778,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.cookie_help_button.grid(row=0, column=3)
 
         self.action_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.action_frame.grid(row=4, column=0, padx=36, pady=(0, 12))
+        self.action_frame.grid(row=5, column=0, padx=36, pady=(0, 12))
 
         self.download_button = customtkinter.CTkButton(
             self.action_frame,
@@ -806,7 +818,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.open_folder_button.grid(row=0, column=2)
 
         self.progress_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.progress_frame.grid(row=5, column=0, padx=36, pady=(0, 14), sticky="ew")
+        self.progress_frame.grid(row=6, column=0, padx=36, pady=(0, 14), sticky="ew")
         self.progress_frame.grid_columnconfigure(0, weight=1)
 
         self.progress_bar = customtkinter.CTkProgressBar(
@@ -825,7 +837,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.progress_label.grid(row=0, column=1, padx=(12, 0))
 
         self.current_track_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.current_track_frame.grid(row=6, column=0, padx=36, pady=(0, 10), sticky="ew")
+        self.current_track_frame.grid(row=7, column=0, padx=36, pady=(0, 10), sticky="ew")
         self.current_track_frame.grid_columnconfigure(0, weight=1)
 
         self.current_track_title = customtkinter.CTkLabel(
@@ -852,8 +864,21 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             font=customtkinter.CTkFont(size=13),
             text_color=MUTED_TEXT,
             anchor="w",
+            justify="left",
         )
-        self.summary_label.grid(row=7, column=0, padx=36, pady=(0, 12), sticky="ew")
+        self.summary_label.grid(row=8, column=0, padx=36, pady=(0, 12), sticky="ew")
+
+        self.log_options_frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        self.log_options_frame.grid(row=9, column=0, padx=36, pady=(0, 8), sticky="ew")
+
+        self.technical_log_checkbox = customtkinter.CTkCheckBox(
+            self.log_options_frame,
+            text="Mostrar log técnico",
+            variable=self.show_technical_log_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        self.technical_log_checkbox.grid(row=0, column=0, sticky="w")
 
         self.log_textbox = customtkinter.CTkTextbox(
             self,
@@ -863,7 +888,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             border_color=GOLD,
             border_width=1,
         )
-        self.log_textbox.grid(row=8, column=0, padx=24, pady=(0, 24), sticky="nsew")
+        self.log_textbox.grid(row=10, column=0, padx=24, pady=(0, 24), sticky="nsew")
         self.log_textbox.insert(
             "end",
             "Pronto. Cole a URL da playlist e clique em Iniciar Download.\n",
@@ -871,7 +896,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.log_textbox.configure(state="disabled")
 
         self.footer_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.footer_frame.grid(row=9, column=0, padx=24, pady=(0, 12), sticky="ew")
+        self.footer_frame.grid(row=11, column=0, padx=24, pady=(0, 12), sticky="ew")
         self.footer_frame.grid_columnconfigure(0, weight=1)
 
         self.footer_label = customtkinter.CTkLabel(
@@ -910,7 +935,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         except Exception:
             pass
 
-    def append_log(self, message: str) -> None:
+    def append_log(self, message: str, technical: bool = False) -> None:
         try:
             self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -918,7 +943,10 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                 log_file.write(f"[{timestamp}] {message}\n")
         except OSError:
             pass
-        self.log_queue.put(message)
+        self.log_queue.put((message, technical))
+
+    def append_technical_log(self, message: str) -> None:
+        self.append_log(message, technical=True)
 
     def update_cookie_status(self) -> None:
         migrate_legacy_cookie_file()
@@ -1119,6 +1147,10 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         text = track if track else "Nenhum download em andamento."
         self.after(0, lambda: self.current_track_label.configure(text=text))
 
+    def set_playlist_name(self, playlist_name: str | None) -> None:
+        text = playlist_name if playlist_name else "-"
+        self.after(0, lambda: self.playlist_label.configure(text=f"Playlist:\n{text}"))
+
     def set_summary(
         self,
         status: str,
@@ -1127,10 +1159,21 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         failures: int = 0,
         remaining: int = 0,
     ) -> None:
-        summary = (
-            f"Resumo: {status} | Total: {total} | "
-            f"Baixadas: {successes} | Falhas: {failures} | Restantes: {remaining}"
-        )
+        if status in {"concluido", "cancelado"}:
+            title = "Concluído" if status == "concluido" else "Cancelado"
+            summary = (
+                f"{title}\n"
+                f"Total: {total}\n"
+                f"Baixadas: {successes}\n"
+                f"Falhas: {failures}"
+            )
+        elif status == "erro":
+            summary = "Falhou\nVerifique as mensagens acima."
+        else:
+            summary = (
+                f"Resumo: {status} | Total: {total} | "
+                f"Baixadas: {successes} | Falhas: {failures} | Restantes: {remaining}"
+            )
         self.after(0, lambda: self.summary_label.configure(text=summary))
 
     def set_controls_running(self, is_running: bool) -> None:
@@ -1153,7 +1196,9 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
     def process_log_queue(self) -> None:
         while not self.log_queue.empty():
-            message = self.log_queue.get_nowait()
+            message, technical = self.log_queue.get_nowait()
+            if technical and not self.show_technical_log_var.get():
+                continue
             self.log_textbox.configure(state="normal")
             self.log_textbox.insert("end", message + "\n")
             self.log_textbox.see("end")
@@ -1184,6 +1229,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.open_folder_button.configure(state="disabled")
         self.set_progress(0, 0)
         self.set_current_track(None)
+        self.set_playlist_name(None)
         self.set_summary("em andamento")
         self.set_controls_running(True)
         self.worker_thread = threading.Thread(
@@ -1195,21 +1241,22 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
     def run_download_flow(self, playlist_url: str, destination_root: Path) -> None:
         try:
-            self.append_log("=" * 70)
-            self.append_log(f"Iniciando processo no {APP_NAME} v{APP_VERSION}...")
-            self.append_log(f"Log completo: {self.log_file_path}")
-            self.append_log(f"URL processada: {playlist_url}")
-            migrate_legacy_cookie_file(self.append_log)
+            self.append_technical_log("=" * 70)
+            self.append_log("Buscando playlist...")
+            self.append_technical_log(f"Iniciando processo no {APP_NAME} v{APP_VERSION}...")
+            self.append_technical_log(f"Log completo: {self.log_file_path}")
+            self.append_technical_log(f"URL processada: {playlist_url}")
+            migrate_legacy_cookie_file(self.append_technical_log)
 
             yt_dlp_path = get_yt_dlp_executable()
             if yt_dlp_path:
-                self.append_log(f"yt-dlp localizado em: {yt_dlp_path}")
+                self.append_technical_log(f"yt-dlp localizado em: {yt_dlp_path}")
             else:
                 self.append_log("yt-dlp.exe nao foi encontrado.")
 
             ffmpeg_location = get_ffmpeg_location()
             if ffmpeg_location:
-                self.append_log(f"FFmpeg localizado em: {ffmpeg_location}")
+                self.append_technical_log(f"FFmpeg localizado em: {ffmpeg_location}")
             else:
                 self.append_log(
                     "FFmpeg nao foi encontrado junto ao app. Tentando usar o PATH do sistema."
@@ -1218,28 +1265,29 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             expected_cookie_file = get_expected_cookie_file_path()
             cookie_file = get_cookie_file_path()
             if cookie_file:
-                self.append_log(f"cookies.txt encontrado: {cookie_file}")
+                self.append_technical_log(f"cookies.txt encontrado: {cookie_file}")
             else:
-                self.append_log(
+                self.append_technical_log(
                     f"cookies.txt nao encontrado ou vazio em: {expected_cookie_file}"
                 )
-                self.append_log(
+                self.append_technical_log(
                     "O app tentara baixar sem cookies. Se o YouTube bloquear por login/anti-bot, coloque cookies.txt nesse local."
                 )
 
-            playlist_name, tracks = extract_playlist_data(playlist_url, self.append_log)
+            playlist_name, tracks = extract_playlist_data(playlist_url, self.append_technical_log)
             if not tracks:
                 self.append_log("A playlist esta vazia.")
                 return
 
-            self.append_log(f"Playlist identificada: {playlist_name}")
+            self.set_playlist_name(playlist_name)
+            self.append_log(f"Playlist:\n{playlist_name}")
             self.append_log(f"{len(tracks)} musicas encontradas.")
 
             output_dir = destination_root / playlist_name
             output_dir.mkdir(parents=True, exist_ok=True)
             self.last_output_dir = output_dir
-            self.append_log(f"Preparando pasta da playlist: {output_dir}")
-            self.append_log("-" * 70)
+            self.append_technical_log(f"Preparando pasta da playlist: {output_dir}")
+            self.append_technical_log("-" * 70)
 
             successes = 0
             failures = []
@@ -1254,22 +1302,25 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                     break
 
                 self.set_current_track(track)
-                self.append_log(f"[{index}/{len(tracks)}]")
+                self.append_log(f"[{index}/{len(tracks)}] Buscando música...")
+                self.append_log("Resultado encontrado.")
+                self.append_log("Baixando...")
+                self.append_log("Convertendo para MP3...")
                 success, message = download_music(
                     track,
                     str(output_dir),
                     ffmpeg_location,
-                    self.append_log,
+                    self.append_technical_log,
                 )
 
                 if success:
                     successes += 1
-                    self.append_log("  OK: concluido")
+                    self.append_log("Concluído.")
                 else:
                     failures.append((track, message))
-                    self.append_log(f"  FALHOU: {message}")
+                    self.append_log(f"Falhou: {message}")
 
-                self.append_log("")
+                self.append_technical_log("")
                 self.set_progress(index, len(tracks))
                 remaining = len(tracks) - index
                 self.set_summary(
@@ -1283,8 +1334,8 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             canceled = self.cancel_requested
             completed = successes + len(failures)
             remaining = max(len(tracks) - completed, 0)
-            self.append_log("-" * 70)
-            self.append_log("RELATORIO FINAL")
+            self.append_technical_log("-" * 70)
+            self.append_technical_log("RELATORIO FINAL")
             self.append_log(f"Total na playlist    : {len(tracks)}")
             self.append_log(f"Baixadas com sucesso : {successes}")
             self.append_log(f"Falhas               : {len(failures)}")
@@ -1297,7 +1348,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                 for track, error in failures:
                     self.append_log(f"- {track} ({error})")
 
-            self.append_log("=" * 70)
+            self.append_technical_log("=" * 70)
             final_status = "cancelado" if canceled else "concluido"
             self.set_current_track(None)
             self.set_summary(final_status, len(tracks), successes, len(failures), remaining)
