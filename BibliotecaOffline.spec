@@ -13,7 +13,7 @@ hiddenimports = ["darkdetect"]
 if os.path.exists("icon.ico"):
     datas.append(("icon.ico", "."))
 
-for binary_name in ["ffmpeg.exe", "ffprobe.exe", "yt-dlp.exe"]:
+for binary_name in ["ffmpeg.exe", "ffprobe.exe", "yt-dlp.exe", "deno.exe"]:
     binary_path = binary_name
     if binary_name == "yt-dlp.exe" and not os.path.exists(binary_path):
         scripts_path = sysconfig.get_path("scripts")

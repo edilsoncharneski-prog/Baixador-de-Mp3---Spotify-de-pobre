@@ -1,4 +1,5 @@
 import base64
+import concurrent.futures
 import ctypes
 import json
 import os
@@ -29,7 +30,7 @@ from icon_data import ICON_DATA_BASE64
 DEFAULT_MUSIC_FOLDER_NAME = "Biblioteca Offline"
 APP_NAME = "Biblioteca Offline"
 APP_EXECUTABLE_NAME = "BibliotecaOffline"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.10"
 APP_AUTHOR = "Edilson Charneski"
 APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
 APP_USAGE_NOTE = (
@@ -47,6 +48,7 @@ SPLASH_BG = "#1a1a1a"
 COOKIE_OK = "#39d98a"
 COOKIE_MISSING = "#ff4d4f"
 MUTED_TEXT = "#9f9f9f"
+MAX_PARALLEL_DOWNLOADS = 3
 INVALID_WINDOWS_CHARS = r'[\\/:*?"<>|]'
 SPOTIFY_PLAYLIST_QUERY_URL = "https://api-partner.spotify.com/pathfinder/v1/query"
 SPOTIFY_PLAYLIST_QUERY_HASH = (
@@ -174,6 +176,22 @@ def get_yt_dlp_executable() -> Path | None:
     scripts_path = sysconfig.get_path("scripts")
     extra_dirs = [Path(scripts_path)] if scripts_path else []
     return find_executable(["yt-dlp.exe", "yt-dlp"], extra_dirs)
+
+
+def get_deno_executable() -> Path | None:
+    """Localiza o runtime JavaScript usado pelo yt-dlp para o desafio do YouTube."""
+    return find_executable(["deno.exe", "deno"])
+
+
+def get_youtube_runtime_args() -> list[str]:
+    """Habilita o componente oficial de JS/PO Token quando o Deno estiver disponivel."""
+    deno_path = get_deno_executable()
+    if not deno_path:
+        return []
+    return [
+        "--js-runtimes", f"deno:{deno_path}",
+        "--remote-components", "ejs:github",
+    ]
 
 
 def get_ffmpeg_location() -> str | None:
@@ -539,11 +557,11 @@ def get_external_process_env() -> dict[str, str]:
 
 def find_youtube_result(yt_dlp_path: Path, search_query: str, cookie_file: Path | None, log, album_name: str = "") -> tuple[str | None, str | None, str]:
     command = [
-        str(yt_dlp_path), "--default-search", "ytsearch5", "--skip-download",
+        str(yt_dlp_path), "--flat-playlist", "--default-search", "ytsearch5", "--skip-download",
         "--dump-single-json", "--no-warnings", f"ytsearch5:{search_query}",
     ]
     if cookie_file:
-        command[6:6] = ["--cookies", str(cookie_file)]
+        command[1:1] = ["--cookies", str(cookie_file)]
     log(f"  Consultando 5 resultados: {search_query}")
     try:
         result = subprocess.run(
@@ -613,7 +631,7 @@ def download_music(
         cookie_modes.append(None)
     for cookie_mode_index, cookie_path in enumerate(cookie_modes, start=1):
         command = [
-            str(yt_dlp_path), "--format", "bestaudio/best", "--check-formats",
+            str(yt_dlp_path), *get_youtube_runtime_args(), "--format", "bestaudio/best", "--check-formats",
             "--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K",
             "--no-playlist", "--no-warnings", "--windows-filenames", "--output", output_template,
         ]
@@ -723,6 +741,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         self.minsize(760, 640)
 
         self.log_queue: queue.Queue[tuple[str, bool]] = queue.Queue()
+        self.log_write_lock = threading.Lock()
         self.worker_thread: threading.Thread | None = None
         self.destination_root = get_default_destination_root()
         self.last_output_dir: Path | None = None
@@ -920,7 +939,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
         self.technical_log_checkbox = customtkinter.CTkCheckBox(
             self.log_options_frame,
-            text="Mostrar log tÃ©cnico",
+            text="Mostrar log técnico",
             variable=self.show_technical_log_var,
             onvalue=True,
             offvalue=False,
@@ -984,10 +1003,11 @@ class BibliotecaOfflineApp(customtkinter.CTk):
 
     def append_log(self, message: str, technical: bool = False) -> None:
         try:
-            self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with self.log_file_path.open("a", encoding="utf-8") as log_file:
-                log_file.write(f"[{timestamp}] {message}\n")
+            with self.log_write_lock:
+                self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with self.log_file_path.open("a", encoding="utf-8") as log_file:
+                    log_file.write(f"[{timestamp}] {message}\n")
         except OSError:
             pass
         self.log_queue.put((message, technical))
@@ -1209,7 +1229,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         remaining: int = 0,
     ) -> None:
         if status in {"concluido", "cancelado"}:
-            title = "ConcluÃ­do" if status == "concluido" else "Cancelado"
+            title = "Concluído" if status == "concluido" else "Cancelado"
             summary = (
                 f"{title}\n"
                 f"Total: {total}\n"
@@ -1303,6 +1323,14 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             else:
                 self.append_log("yt-dlp.exe nao foi encontrado.")
 
+            deno_path = get_deno_executable()
+            if deno_path:
+                self.append_technical_log(f"Runtime JavaScript localizado em: {deno_path}")
+            else:
+                self.append_technical_log(
+                    "Runtime JavaScript nao encontrado; o yt-dlp usara o modo de compatibilidade."
+                )
+
             ffmpeg_location = get_ffmpeg_location()
             if ffmpeg_location:
                 self.append_technical_log(f"FFmpeg localizado em: {ffmpeg_location}")
@@ -1347,43 +1375,88 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             self.set_progress(0, len(tracks))
             self.set_summary("em andamento", len(tracks), successes, len(failures), len(tracks))
 
-            for index, track in enumerate(tracks, start=1):
-                if self.cancel_requested:
-                    remaining = len(tracks) - index + 1
-                    self.append_log("Download cancelado pelo usuario.")
-                    self.append_log(f"Musicas restantes nao processadas: {remaining}")
-                    break
+            total_tracks = len(tracks)
+            completed = 0
+            active_downloads = min(MAX_PARALLEL_DOWNLOADS, total_tracks)
+            self.append_log(f"Modo rapido ativado: ate {active_downloads} downloads ao mesmo tempo.")
+            self.append_technical_log(f"Downloads paralelos configurados: {active_downloads}")
 
-                self.set_current_track(track)
-                self.append_log(f"[{index}/{len(tracks)}] Buscando mÃºsica...")
-                self.append_log("Resultado encontrado.")
-                self.append_log("Baixando...")
-                self.append_log("Convertendo para MP3...")
+            def run_track_download(index: int, track: str) -> tuple[int, str, bool, str]:
+                def prefixed_log(message: str) -> None:
+                    self.append_technical_log(f"[{index}/{total_tracks}] {message}")
+
+                prefixed_log("")
+                prefixed_log("Iniciando processamento.")
                 success, message = download_music(
                     track,
                     str(output_dir),
                     ffmpeg_location,
-                    self.append_technical_log,
+                    prefixed_log,
                     playlist_name if collection_type == "album" else "",
                 )
+                return index, track, success, message
 
-                if success:
-                    successes += 1
-                    self.append_log("ConcluÃ­do.")
-                else:
-                    failures.append((track, message))
-                    self.append_log(f"Falhou: {message}")
+            next_index = 1
+            pending: dict[concurrent.futures.Future, tuple[int, str]] = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=active_downloads) as executor:
+                while next_index <= total_tracks and len(pending) < active_downloads and not self.cancel_requested:
+                    track = tracks[next_index - 1]
+                    self.append_log(f"[{next_index}/{total_tracks}] Entrou na fila: {track}")
+                    pending[executor.submit(run_track_download, next_index, track)] = (next_index, track)
+                    next_index += 1
 
-                self.append_technical_log("")
-                self.set_progress(index, len(tracks))
-                remaining = len(tracks) - index
-                self.set_summary(
-                    "em andamento",
-                    len(tracks),
-                    successes,
-                    len(failures),
-                    remaining,
-                )
+                while pending:
+                    if self.cancel_requested:
+                        for future in pending:
+                            future.cancel()
+                        self.append_log("Download cancelado pelo usuario.")
+                        break
+
+                    done, _ = concurrent.futures.wait(
+                        pending,
+                        timeout=0.5,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
+                    )
+                    if not done:
+                        running = ", ".join(track for _, track in pending.values())
+                        self.set_current_track(f"Processando em paralelo: {running}")
+                        continue
+
+                    for future in done:
+                        original_index, original_track = pending.pop(future)
+                        if future.cancelled():
+                            failures.append((original_track, "Cancelado antes de iniciar."))
+                            continue
+                        try:
+                            index, track, success, message = future.result()
+                        except Exception as error:
+                            index, track = original_index, original_track
+                            success, message = False, f"Erro inesperado: {error}"
+
+                        completed += 1
+                        if success:
+                            successes += 1
+                            self.append_log(f"[{index}/{total_tracks}] Concluído: {track}")
+                        else:
+                            failures.append((track, message))
+                            self.append_log(f"[{index}/{total_tracks}] Falhou: {track} ({message})")
+
+                        self.append_technical_log("")
+                        self.set_progress(completed, total_tracks)
+                        remaining = total_tracks - completed
+                        self.set_summary(
+                            "em andamento",
+                            total_tracks,
+                            successes,
+                            len(failures),
+                            remaining,
+                        )
+
+                        while next_index <= total_tracks and len(pending) < active_downloads and not self.cancel_requested:
+                            next_track = tracks[next_index - 1]
+                            self.append_log(f"[{next_index}/{total_tracks}] Entrou na fila: {next_track}")
+                            pending[executor.submit(run_track_download, next_index, next_track)] = (next_index, next_track)
+                            next_index += 1
 
             canceled = self.cancel_requested
             completed = successes + len(failures)
