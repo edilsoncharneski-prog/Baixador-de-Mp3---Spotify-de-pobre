@@ -4,12 +4,15 @@ import sys
 import requests
 
 from core.downloader import (
-    download_music,
+    MAX_PARALLEL_DOWNLOADS,
+    download_tracks,
     get_cookie_file_path,
     get_expected_cookie_file_path,
+    get_ffmpeg_location,
+    get_yt_dlp_executable,
+    migrate_legacy_cookie_file,
 )
-from core.file_manager import create_output_dir
-from core.spotify_parser import extract_playlist_tracks
+from core.spotify_parser import extract_playlist_data
 
 
 DEFAULT_OUTPUT_DIR = Path.home() / "Music" / "Biblioteca Offline"
@@ -17,17 +20,17 @@ DEFAULT_OUTPUT_DIR = Path.home() / "Music" / "Biblioteca Offline"
 
 def main() -> None:
     print("=" * 60)
-    print("   BIBLIOTECA OFFLINE")
+    print("   BIBLIOTECA OFFLINE (modo console)")
     print("=" * 60)
 
-    playlist_url = input("\nCole a URL da playlist publica do Spotify aqui: ").strip()
+    playlist_url = input("\nCole a URL da playlist/album/faixa publica do Spotify aqui: ").strip()
     if not playlist_url:
         print("[ERRO] Nenhuma URL fornecida. Saindo.")
         sys.exit(1)
 
-    print("\n[ETAPA 1/3] Extraindo informacoes da playlist...")
+    print("\n[ETAPA 1/3] Extraindo informacoes do Spotify...")
     try:
-        musicas = extract_playlist_tracks(playlist_url)
+        collection_type, playlist_name, musicas = extract_playlist_data(playlist_url, print)
         if not musicas:
             print("A playlist esta vazia.")
             sys.exit(0)
@@ -40,32 +43,48 @@ def main() -> None:
         sys.exit(1)
 
     print("[ETAPA 2/3] Preparando pasta de destino...")
-    dir_path = create_output_dir(str(DEFAULT_OUTPUT_DIR))
+    dir_path = DEFAULT_OUTPUT_DIR / playlist_name
+    dir_path.mkdir(parents=True, exist_ok=True)
     print(f"  Pasta: {dir_path}\n")
 
+    migrate_legacy_cookie_file(print)
     cookie_file = get_cookie_file_path()
     if cookie_file:
         print(f"  cookies.txt encontrado: {cookie_file}")
     else:
         print(f"  cookies.txt nao encontrado ou vazio em: {get_expected_cookie_file_path()}")
-        print("  O script nao vai tentar ler cookies do Chrome.\n")
 
-    print("[ETAPA 3/3] Iniciando lote de downloads...")
+    if not get_yt_dlp_executable():
+        print("[ERRO FATAL] yt-dlp.exe nao foi encontrado.")
+        sys.exit(1)
+    ffmpeg_location = get_ffmpeg_location()
+    if ffmpeg_location:
+        print(f"  FFmpeg localizado em: {ffmpeg_location}")
+    else:
+        print("  FFmpeg nao encontrado junto ao app. Tentando usar o PATH do sistema.")
+    print()
+
+    print(f"[ETAPA 3/3] Iniciando lote de downloads (ate {MAX_PARALLEL_DOWNLOADS} em paralelo)...")
     print("-" * 60)
 
-    sucessos = 0
-    falhas = []
+    source_album = playlist_name if collection_type == "album" else ""
 
-    for index, musica in enumerate(musicas, start=1):
-        print(f"[{index}/{len(musicas)}]", end=" ")
-        sucesso, msg = download_music(musica, dir_path)
+    def on_result(index: int, total: int, track: str, success: bool, message: str) -> None:
+        status = "OK Concluido" if success else f"FALHOU: {message}"
+        print(f"[{index}/{total}] {track}\n  {status}\n")
 
-        if sucesso:
-            print("  OK Concluido\n")
-            sucessos += 1
-        else:
-            print(f"  FALHOU: {msg}\n")
-            falhas.append((musica, msg))
+    try:
+        sucessos, falhas = download_tracks(
+            musicas,
+            str(dir_path),
+            ffmpeg_location,
+            print,
+            source_album,
+            on_result,
+        )
+    except Exception as error:  # diagnostico final do modo console
+        print(f"\n[ERRO FATAL] {type(error).__name__}: {error}")
+        sys.exit(1)
 
     print("-" * 60)
     print("=" * 60)

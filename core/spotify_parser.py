@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 
 
+APP_NAME = "Biblioteca Offline"
 SPOTIFY_PLAYLIST_QUERY_URL = "https://api-partner.spotify.com/pathfinder/v1/query"
 SPOTIFY_PLAYLIST_QUERY_HASH = (
     "908a5597b4d0af0489a9ad6a2d41bc3b416ff47c0884016d92bbd6822d0eb6d8"
@@ -15,9 +16,25 @@ SPOTIFY_URL_PATTERN = re.compile(
     r"(https?://[^\s<>\"']+|spotify:(?:playlist|album|track):[A-Za-z0-9]+)"
 )
 SPOTIFY_COLLECTION_TYPES = {"playlist", "album", "track"}
+INVALID_WINDOWS_CHARS = r'[\\/:*?"<>|]'
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
-def _normalize_spotify_playlist_url(playlist_url: str) -> str:
+def _noop_log(message: str) -> None:
+    pass
+
+
+def sanitize_folder_name(folder_name: str) -> str:
+    clean_name = re.sub(INVALID_WINDOWS_CHARS, "", folder_name)
+    clean_name = re.sub(r"\s+", " ", clean_name).strip(" .")
+    return clean_name[:100] or "Playlist Spotify"
+
+
+def normalize_spotify_playlist_url(playlist_url: str, log=None) -> str:
+    log = log or _noop_log
     clean_url = playlist_url.strip().strip('"').strip("'")
     match = SPOTIFY_URL_PATTERN.search(clean_url)
     if match:
@@ -34,24 +51,21 @@ def _normalize_spotify_playlist_url(playlist_url: str) -> str:
         return clean_url
 
     if hostname.endswith("spotify.com") or hostname.endswith("spotify.link"):
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
         try:
-            response = requests.get(clean_url, headers=headers, timeout=10, allow_redirects=True)
+            response = requests.get(clean_url, headers={"User-Agent": USER_AGENT}, timeout=10, allow_redirects=True)
             response.close()
-            return response.url.strip() or clean_url
-        except requests.exceptions.RequestException:
-            return clean_url
+            final_url = response.url.strip()
+            if final_url and final_url != clean_url:
+                log(f"URL Spotify normalizada: {final_url}")
+                return final_url
+        except requests.exceptions.RequestException as error:
+            log(f"Nao foi possivel resolver redirecionamento do Spotify: {error}")
 
     return clean_url
 
 
-def _extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
-    normalized_url = _normalize_spotify_playlist_url(playlist_url)
+def extract_spotify_collection(playlist_url: str, log=None) -> tuple[str, str]:
+    normalized_url = normalize_spotify_playlist_url(playlist_url, log)
     parsed_url = urlparse(normalized_url)
     path_parts = [part for part in parsed_url.path.split("/") if part]
 
@@ -76,46 +90,43 @@ def _extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
     )
 
 
-def _extract_playlist_id(playlist_url: str) -> str:
-    return _extract_spotify_collection(playlist_url)[1]
-
-
-def _build_embed_playlist_url(playlist_url: str) -> str:
-    collection_type, collection_id = _extract_spotify_collection(playlist_url)
+def build_embed_playlist_url(playlist_url: str, log=None) -> str:
+    collection_type, collection_id = extract_spotify_collection(playlist_url, log)
     return f"https://open.spotify.com/embed/{collection_type}/{collection_id}"
 
 
-def _extract_tracks_from_embed_data(data: dict) -> list[str]:
+def extract_tracks_from_embed_data(data: dict) -> list[str]:
     track_items = data["props"]["pageProps"]["state"]["data"]["entity"]["trackList"]
-
-    tracks = []
-    for item in track_items:
-        track_name = item["title"]
-        artist_names = item["subtitle"]
-        tracks.append(f"{track_name} - {artist_names}")
-
-    return tracks
+    return [f"{item['title']} - {item['subtitle']}" for item in track_items]
 
 
-def _extract_tracks_from_page_data(data: dict) -> list[str]:
+def extract_tracks_from_page_data(data: dict) -> list[str]:
     track_items = data["props"]["pageProps"]["data"]["trackList"]["items"]
 
     tracks = []
     for item in track_items:
         track_name = item["track"]["name"]
         artists = item["track"]["artists"]
-
         if isinstance(artists, list):
             artist_names = ", ".join(artist["name"] for artist in artists)
         else:
             artist_names = str(artists)
-
         tracks.append(f"{track_name} - {artist_names}")
 
     return tracks
 
 
-def _extract_access_token_from_embed_data(data: dict) -> str | None:
+def extract_playlist_name_from_embed_data(data: dict) -> str:
+    playlist_name = data["props"]["pageProps"]["state"]["data"]["entity"]["name"]
+    return sanitize_folder_name(str(playlist_name))
+
+
+def extract_playlist_name_from_page_data(data: dict) -> str:
+    playlist_name = data["props"]["pageProps"]["data"]["name"]
+    return sanitize_folder_name(str(playlist_name))
+
+
+def extract_access_token_from_embed_data(data: dict) -> str | None:
     try:
         token = data["props"]["pageProps"]["state"]["settings"]["session"]["accessToken"]
     except (KeyError, TypeError):
@@ -124,7 +135,7 @@ def _extract_access_token_from_embed_data(data: dict) -> str | None:
     return str(token) if token else None
 
 
-def _extract_track_from_graphql_item(item: dict) -> str | None:
+def extract_track_from_graphql_item(item: dict) -> str | None:
     track = item.get("itemV2", {}).get("data", {})
     if track.get("__typename") != "Track":
         return None
@@ -143,7 +154,8 @@ def _extract_track_from_graphql_item(item: dict) -> str | None:
     return f"{track_name} - {', '.join(artist_names)}"
 
 
-def _fetch_all_tracks_from_graphql(playlist_id: str, access_token: str) -> list[str]:
+def fetch_all_tracks_from_graphql(playlist_id: str, access_token: str, log=None) -> list[str]:
+    log = log or _noop_log
     tracks = []
     offset = 0
     limit = 100
@@ -153,10 +165,7 @@ def _fetch_all_tracks_from_graphql(playlist_id: str, access_token: str) -> list[
         "App-Platform": "WebPlayer",
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": USER_AGENT,
     }
 
     while True:
@@ -189,11 +198,13 @@ def _fetch_all_tracks_from_graphql(playlist_id: str, access_token: str) -> list[
         content = playlist["content"]
         items = content.get("items", [])
         for item in items:
-            track = _extract_track_from_graphql_item(item)
+            track = extract_track_from_graphql_item(item)
             if track:
                 tracks.append(track)
 
         total_count = int(content.get("totalCount") or 0)
+        log(f"  Carregadas {len(tracks)}/{total_count or '?'} musicas do Spotify...")
+
         next_offset = content.get("pagingInfo", {}).get("nextOffset")
         if not next_offset or not items or (total_count and next_offset >= total_count):
             break
@@ -203,74 +214,81 @@ def _fetch_all_tracks_from_graphql(playlist_id: str, access_token: str) -> list[
     return tracks
 
 
-def extract_playlist_tracks(playlist_url: str) -> list[str]:
+def extract_playlist_data(playlist_url: str, log=None) -> tuple[str, str, list[str]]:
     """
-    Extrai a lista de "Musica - Artista" de uma playlist, album ou faixa publica do Spotify
-    atraves do parsing do HTML da pagina embed (bloco __NEXT_DATA__).
+    Extrai (tipo, nome, faixas) de uma playlist, album ou faixa publica do Spotify
+    atraves do parsing do HTML da pagina embed (bloco __NEXT_DATA__), com paginacao
+    via GraphQL quando um access token esta disponivel.
     """
-    playlist_url = _normalize_spotify_playlist_url(playlist_url)
-    collection_type, playlist_id = _extract_spotify_collection(playlist_url)
-    embed_url = _build_embed_playlist_url(playlist_url)
+    log = log or _noop_log
+    playlist_url = normalize_spotify_playlist_url(playlist_url, log)
+    collection_type, playlist_id = extract_spotify_collection(playlist_url)
+    embed_url = build_embed_playlist_url(playlist_url)
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-    }
-
-    print("  -> Conectando ao Spotify...")
-    response = requests.get(embed_url, headers=headers, timeout=15)
+    log("Conectando ao Spotify pela pagina embed...")
+    response = requests.get(embed_url, headers={"User-Agent": USER_AGENT}, timeout=20)
     response.raise_for_status()
     response.encoding = "utf-8"
-
-    print("  -> Extraindo dados da pagina...")
+    log("Extraindo dados do Spotify...")
     soup = BeautifulSoup(response.text, "html.parser")
-
     script_tag = soup.find("script", id="__NEXT_DATA__")
     if not script_tag:
-        raise ValueError(
-            "Nao foi possivel encontrar os dados do Spotify. O link e realmente publico?"
-        )
-
+        raise ValueError("Nao foi possivel encontrar os dados do Spotify. O link e publico?")
     try:
         data = json.loads(script_tag.string)
-    except (KeyError, json.JSONDecodeError, TypeError) as error:
-        raise ValueError(
-            "Erro ao analisar a estrutura de dados do Spotify. "
-            f"O layout do site pode ter mudado. Detalhes: {error}"
-        ) from error
+    except (json.JSONDecodeError, TypeError) as error:
+        raise ValueError(f"Erro ao ler JSON do Spotify: {error}") from error
 
     if collection_type == "track":
         entity = data["props"]["pageProps"]["state"]["data"]["entity"]
-        track_name = entity.get("title") or entity.get("name")
+        track_name = str(entity.get("title") or entity.get("name") or "Spotify")
         artists = entity.get("artists") or []
         artist_names = ", ".join(
-            artist.get("name", "") for artist in artists if isinstance(artist, dict)
+            str(artist.get("name"))
+            for artist in artists
+            if isinstance(artist, dict) and artist.get("name")
         )
-        if not track_name or not artist_names:
-            raise ValueError("Nao foi possivel extrair os dados da faixa do Spotify.")
-        return [f"{track_name} - {artist_names}"]
+        if not artist_names:
+            artist_names = "Artista desconhecido"
+        duration = entity.get("duration")
+        if duration:
+            log(f"Faixa individual: {track_name} | duracao: {int(duration) // 1000}s")
+        return collection_type, sanitize_folder_name(track_name), [f"{track_name} - {artist_names}"]
 
+    playlist_name = "Spotify"
     try:
-        access_token = _extract_access_token_from_embed_data(data)
-        if collection_type == "playlist" and access_token:
-            print("  -> Buscando todas as paginas da playlist...")
-            tracks = _fetch_all_tracks_from_graphql(playlist_id, access_token)
+        playlist_name = extract_playlist_name_from_embed_data(data)
+    except (KeyError, TypeError):
+        try:
+            playlist_name = extract_playlist_name_from_page_data(data)
+        except (KeyError, TypeError):
+            pass
+
+    access_token = extract_access_token_from_embed_data(data)
+    if collection_type == "playlist" and access_token:
+        try:
+            log("Buscando todas as paginas da playlist...")
+            tracks = fetch_all_tracks_from_graphql(playlist_id, access_token, log)
             if tracks:
-                return tracks
-    except (KeyError, TypeError, ValueError, requests.exceptions.RequestException):
-        print("  -> Nao foi possivel paginar. Usando lista inicial do embed.")
+                return collection_type, playlist_name, tracks
+        except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as error:
+            log(f"  Nao foi possivel paginar pelo Spotify: {error}")
+            log("  Usando lista inicial disponivel no embed.")
 
     try:
-        return _extract_tracks_from_embed_data(data)
+        return collection_type, playlist_name, extract_tracks_from_embed_data(data)
     except (KeyError, TypeError):
         pass
-
     try:
-        return _extract_tracks_from_page_data(data)
+        return collection_type, playlist_name, extract_tracks_from_page_data(data)
     except (KeyError, TypeError) as error:
         raise ValueError(
             "Erro ao analisar a estrutura de dados do Spotify. "
             f"O layout do site pode ter mudado. Detalhes: {error}"
         ) from error
+
+
+def extract_playlist_tracks(playlist_url: str) -> list[str]:
+    """Compatibilidade: retorna apenas a lista de faixas."""
+    _, _, tracks = extract_playlist_data(playlist_url)
+    return tracks

@@ -1,36 +1,36 @@
 import base64
 import concurrent.futures
 import ctypes
-import json
 import os
 import queue
 import re
-import shutil
-import subprocess
 import sys
-import sysconfig
 import threading
 import tkinter as tk
 import tkinter.filedialog as filedialog
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
 import customtkinter
 import requests
-from bs4 import BeautifulSoup
-from core.youtube import (
-    build_youtube_search_terms as build_shared_youtube_search_terms,
-    choose_youtube_result,
+from core.downloader import (
+    APP_NAME,
+    MAX_PARALLEL_DOWNLOADS,
+    download_music,
+    get_cookie_file_path,
+    get_deno_executable,
+    get_expected_cookie_file_path,
+    get_ffmpeg_location,
+    get_yt_dlp_executable,
+    migrate_legacy_cookie_file,
 )
+from core.spotify_parser import extract_playlist_data
 from icon_data import ICON_DATA_BASE64
 
 
-DEFAULT_MUSIC_FOLDER_NAME = "Biblioteca Offline"
-APP_NAME = "Biblioteca Offline"
 APP_EXECUTABLE_NAME = "BibliotecaOffline"
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 APP_AUTHOR = "Edilson Charneski"
 APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
 APP_USAGE_NOTE = (
@@ -48,17 +48,6 @@ SPLASH_BG = "#1a1a1a"
 COOKIE_OK = "#39d98a"
 COOKIE_MISSING = "#ff4d4f"
 MUTED_TEXT = "#9f9f9f"
-MAX_PARALLEL_DOWNLOADS = 3
-INVALID_WINDOWS_CHARS = r'[\\/:*?"<>|]'
-SPOTIFY_PLAYLIST_QUERY_URL = "https://api-partner.spotify.com/pathfinder/v1/query"
-SPOTIFY_PLAYLIST_QUERY_HASH = (
-    "908a5597b4d0af0489a9ad6a2d41bc3b416ff47c0884016d92bbd6822d0eb6d8"
-)
-SPOTIFY_PLAYLIST_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{16,64}$")
-SPOTIFY_URL_PATTERN = re.compile(
-    r"(https?://[^\s<>\"']+|spotify:(?:playlist|album|track):[A-Za-z0-9]+)"
-)
-SPOTIFY_COLLECTION_TYPES = {"playlist", "album", "track"}
 
 
 customtkinter.set_appearance_mode("dark")
@@ -75,19 +64,8 @@ def get_app_base_path() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def get_external_base_path() -> Path:
-    """Retorna a pasta visivel do app, onde o usuario pode colocar arquivos auxiliares."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
-
-
 def get_user_data_path() -> Path:
     return Path.home() / "Music" / APP_NAME
-
-
-def get_expected_cookie_file_path() -> Path:
-    return get_user_data_path() / "cookies.txt"
 
 
 def get_log_file_path() -> Path:
@@ -95,7 +73,7 @@ def get_log_file_path() -> Path:
 
 
 def get_default_destination_root() -> Path:
-    destination_root = Path.home() / "Music" / DEFAULT_MUSIC_FOLDER_NAME
+    destination_root = Path.home() / "Music" / APP_NAME
     destination_root.mkdir(parents=True, exist_ok=True)
     return destination_root
 
@@ -107,39 +85,6 @@ def normalize_destination_path(destination_text: str) -> Path:
     return Path(clean_text).expanduser()
 
 
-def get_cookie_file_path() -> Path | None:
-    cookie_file = get_expected_cookie_file_path()
-    if cookie_file.is_file() and cookie_file.stat().st_size > 0:
-        return cookie_file
-    return None
-
-
-def migrate_legacy_cookie_file(log=None) -> None:
-    expected_cookie_file = get_expected_cookie_file_path()
-    legacy_cookie_files = [
-        get_external_base_path() / "cookies.txt",
-    ]
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        legacy_cookie_files.append(Path(appdata) / APP_NAME / "cookies.txt")
-
-    if expected_cookie_file.exists():
-        return
-
-    for legacy_cookie_file in legacy_cookie_files:
-        if not legacy_cookie_file.is_file():
-            continue
-        try:
-            expected_cookie_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(legacy_cookie_file, expected_cookie_file)
-            if log:
-                log(f"cookies.txt migrado para: {expected_cookie_file}")
-            return
-        except OSError as error:
-            if log:
-                log(f"Nao foi possivel migrar cookies.txt: {error}")
-
-
 def ensure_icon_file() -> Path:
     icon_path = get_app_base_path() / "icon.ico"
     if icon_path.is_file() and icon_path.stat().st_size > 0:
@@ -147,531 +92,6 @@ def ensure_icon_file() -> Path:
 
     icon_path.write_bytes(base64.b64decode(ICON_DATA_BASE64))
     return icon_path
-
-
-def find_executable(candidates: list[str], extra_dirs: list[Path] | None = None) -> Path | None:
-    search_dirs = [
-        get_app_base_path(),
-        get_external_base_path(),
-        Path(__file__).resolve().parent.parent,
-    ]
-    if extra_dirs:
-        search_dirs.extend(extra_dirs)
-
-    for directory in search_dirs:
-        for candidate in candidates:
-            executable_path = directory / candidate
-            if executable_path.is_file():
-                return executable_path
-
-    for candidate in candidates:
-        found_path = shutil.which(candidate)
-        if found_path:
-            return Path(found_path)
-
-    return None
-
-
-def get_yt_dlp_executable() -> Path | None:
-    scripts_path = sysconfig.get_path("scripts")
-    extra_dirs = [Path(scripts_path)] if scripts_path else []
-    return find_executable(["yt-dlp.exe", "yt-dlp"], extra_dirs)
-
-
-def get_deno_executable() -> Path | None:
-    """Localiza o runtime JavaScript usado pelo yt-dlp para o desafio do YouTube."""
-    return find_executable(["deno.exe", "deno"])
-
-
-def get_youtube_runtime_args() -> list[str]:
-    """Habilita o componente oficial de JS/PO Token quando o Deno estiver disponivel."""
-    deno_path = get_deno_executable()
-    if not deno_path:
-        return []
-    return [
-        "--js-runtimes", f"deno:{deno_path}",
-        "--remote-components", "ejs:github",
-    ]
-
-
-def get_ffmpeg_location() -> str | None:
-    base_path = get_app_base_path()
-    ffmpeg_path = base_path / "ffmpeg.exe"
-    ffprobe_path = base_path / "ffprobe.exe"
-
-    if ffmpeg_path.exists() and ffprobe_path.exists():
-        return str(base_path)
-
-    local_ffmpeg_path = Path(__file__).resolve().parent / "ffmpeg.exe"
-    local_ffprobe_path = Path(__file__).resolve().parent / "ffprobe.exe"
-    if local_ffmpeg_path.exists() and local_ffprobe_path.exists():
-        return str(local_ffmpeg_path.parent)
-
-    return None
-
-
-def normalize_spotify_playlist_url(playlist_url: str, log=None) -> str:
-    clean_url = playlist_url.strip().strip('"').strip("'")
-    match = SPOTIFY_URL_PATTERN.search(clean_url)
-    if match:
-        clean_url = match.group(1).rstrip(").,;")
-
-    if clean_url.startswith(("spotify:playlist:", "spotify:album:", "spotify:track:")):
-        _, collection_type, collection_id = clean_url.split(":", 2)
-        if collection_type in SPOTIFY_COLLECTION_TYPES and SPOTIFY_PLAYLIST_ID_PATTERN.match(collection_id):
-            return f"https://open.spotify.com/{collection_type}/{collection_id}"
-
-    parsed_url = urlparse(clean_url)
-    hostname = (parsed_url.hostname or "").lower()
-    if hostname == "open.spotify.com":
-        return clean_url
-
-    if hostname.endswith("spotify.com") or hostname.endswith("spotify.link"):
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
-        try:
-            response = requests.get(clean_url, headers=headers, timeout=10, allow_redirects=True)
-            response.close()
-            final_url = response.url.strip()
-            if final_url and final_url != clean_url:
-                if log:
-                    log(f"URL Spotify normalizada: {final_url}")
-                return final_url
-        except requests.exceptions.RequestException as error:
-            if log:
-                log(f"Nao foi possivel resolver redirecionamento do Spotify: {shorten_error(error)}")
-
-    return clean_url
-
-
-def extract_spotify_collection(playlist_url: str) -> tuple[str, str]:
-    normalized_url = normalize_spotify_playlist_url(playlist_url)
-    parsed_url = urlparse(normalized_url)
-    path_parts = [part for part in parsed_url.path.split("/") if part]
-
-    if (parsed_url.hostname or "").lower() != "open.spotify.com":
-        raise ValueError(
-            "URL invalida. Use um link publico de playlist, album ou faixa do Spotify."
-        )
-
-    if (
-        len(path_parts) >= 3
-        and path_parts[0] == "embed"
-        and path_parts[1] in SPOTIFY_COLLECTION_TYPES
-    ):
-        return path_parts[1], path_parts[2]
-    if len(path_parts) >= 2 and path_parts[0] in SPOTIFY_COLLECTION_TYPES:
-        return path_parts[0], path_parts[1]
-    if len(path_parts) >= 3 and path_parts[1] in SPOTIFY_COLLECTION_TYPES:
-        return path_parts[1], path_parts[2]
-
-    raise ValueError(
-        "URL invalida. Use um link publico de playlist, album ou faixa do Spotify."
-    )
-
-
-def extract_playlist_id(playlist_url: str) -> str:
-    return extract_spotify_collection(playlist_url)[1]
-
-
-def build_embed_playlist_url(playlist_url: str) -> str:
-    collection_type, collection_id = extract_spotify_collection(playlist_url)
-    return f"https://open.spotify.com/embed/{collection_type}/{collection_id}"
-
-
-def sanitize_folder_name(folder_name: str) -> str:
-    clean_name = re.sub(INVALID_WINDOWS_CHARS, "", folder_name)
-    clean_name = re.sub(r"\s+", " ", clean_name).strip(" .")
-    return clean_name[:100] or "Playlist Spotify"
-
-
-def extract_playlist_name_from_embed_data(data: dict) -> str:
-    playlist_name = data["props"]["pageProps"]["state"]["data"]["entity"]["name"]
-    return sanitize_folder_name(str(playlist_name))
-
-
-def extract_playlist_name_from_page_data(data: dict) -> str:
-    playlist_name = data["props"]["pageProps"]["data"]["name"]
-    return sanitize_folder_name(str(playlist_name))
-
-
-def extract_tracks_from_embed_data(data: dict) -> list[str]:
-    track_items = data["props"]["pageProps"]["state"]["data"]["entity"]["trackList"]
-    return [f"{item['title']} - {item['subtitle']}" for item in track_items]
-
-
-def extract_tracks_from_page_data(data: dict) -> list[str]:
-    track_items = data["props"]["pageProps"]["data"]["trackList"]["items"]
-
-    tracks = []
-    for item in track_items:
-        track_name = item["track"]["name"]
-        artists = item["track"]["artists"]
-        if isinstance(artists, list):
-            artist_names = ", ".join(artist["name"] for artist in artists)
-        else:
-            artist_names = str(artists)
-        tracks.append(f"{track_name} - {artist_names}")
-
-    return tracks
-
-
-def extract_access_token_from_embed_data(data: dict) -> str | None:
-    try:
-        token = data["props"]["pageProps"]["state"]["settings"]["session"]["accessToken"]
-    except (KeyError, TypeError):
-        return None
-
-    return str(token) if token else None
-
-
-def extract_track_from_graphql_item(item: dict) -> str | None:
-    track = item.get("itemV2", {}).get("data", {})
-    if track.get("__typename") != "Track":
-        return None
-
-    track_name = track.get("name")
-    artist_items = track.get("artists", {}).get("items", [])
-    artist_names = [
-        artist.get("profile", {}).get("name")
-        for artist in artist_items
-        if artist.get("profile", {}).get("name")
-    ]
-
-    if not track_name or not artist_names:
-        return None
-
-    return f"{track_name} - {', '.join(artist_names)}"
-
-
-def fetch_all_tracks_from_graphql(playlist_id: str, access_token: str, log) -> list[str]:
-    tracks = []
-    offset = 0
-    limit = 100
-
-    headers = {
-        "Accept": "application/json",
-        "App-Platform": "WebPlayer",
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ),
-    }
-
-    while True:
-        payload = {
-            "operationName": "queryPlaylist",
-            "variables": {
-                "uri": f"spotify:playlist:{playlist_id}",
-                "limit": limit,
-                "offset": offset,
-            },
-            "extensions": {
-                "persistedQuery": {
-                    "version": 1,
-                    "sha256Hash": SPOTIFY_PLAYLIST_QUERY_HASH,
-                }
-            },
-        }
-
-        response = requests.post(
-            SPOTIFY_PLAYLIST_QUERY_URL,
-            headers=headers,
-            json=payload,
-            timeout=20,
-        )
-        response.raise_for_status()
-        playlist = response.json()["data"]["playlistV2"]
-        if playlist.get("__typename") != "Playlist":
-            raise ValueError("O Spotify nao retornou uma playlist valida.")
-
-        content = playlist["content"]
-        items = content.get("items", [])
-        page_tracks = []
-        for item in items:
-            track = extract_track_from_graphql_item(item)
-            if track:
-                page_tracks.append(track)
-
-        tracks.extend(page_tracks)
-        total_count = int(content.get("totalCount") or 0)
-        log(f"  Carregadas {len(tracks)}/{total_count or '?'} musicas do Spotify...")
-
-        next_offset = content.get("pagingInfo", {}).get("nextOffset")
-        if not next_offset or not items or (total_count and next_offset >= total_count):
-            break
-
-        offset = int(next_offset)
-
-    return tracks
-
-
-def extract_playlist_data(playlist_url: str, log) -> tuple[str, str, list[str]]:
-    playlist_url = normalize_spotify_playlist_url(playlist_url, log)
-    collection_type, playlist_id = extract_spotify_collection(playlist_url)
-    embed_url = build_embed_playlist_url(playlist_url)
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-
-    log("Conectando ao Spotify pela pagina embed...")
-    response = requests.get(embed_url, headers=headers, timeout=20)
-    response.raise_for_status()
-    response.encoding = "utf-8"
-    log("Extraindo dados do Spotify...")
-    soup = BeautifulSoup(response.text, "html.parser")
-    script_tag = soup.find("script", id="__NEXT_DATA__")
-    if not script_tag:
-        raise ValueError("Nao foi possivel encontrar os dados do Spotify. O link e publico?")
-    try:
-        data = json.loads(script_tag.string)
-    except (json.JSONDecodeError, TypeError) as error:
-        raise ValueError(f"Erro ao ler JSON do Spotify: {error}") from error
-
-    entity = data["props"]["pageProps"]["state"]["data"]["entity"]
-    if collection_type == "track":
-        track_name = str(entity.get("title") or entity.get("name") or "Spotify")
-        artists = entity.get("artists") or []
-        artist_names = ", ".join(str(artist.get("name")) for artist in artists if isinstance(artist, dict) and artist.get("name"))
-        if not artist_names:
-            artist_names = "Artista desconhecido"
-        duration = entity.get("duration")
-        if duration:
-            log(f"Faixa individual: {track_name} | duracao: {int(duration) // 1000}s")
-        return collection_type, sanitize_folder_name(track_name), [f"{track_name} - {artist_names}"]
-
-    playlist_name = "Spotify"
-    try:
-        playlist_name = extract_playlist_name_from_embed_data(data)
-    except (KeyError, TypeError):
-        try:
-            playlist_name = extract_playlist_name_from_page_data(data)
-        except (KeyError, TypeError):
-            pass
-
-    access_token = extract_access_token_from_embed_data(data)
-    if collection_type == "playlist" and access_token:
-        try:
-            log("Buscando todas as paginas da playlist...")
-            tracks = fetch_all_tracks_from_graphql(playlist_id, access_token, log)
-            if tracks:
-                return collection_type, playlist_name, tracks
-        except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as error:
-            log(f"  Nao foi possivel paginar pelo Spotify: {shorten_error(error)}")
-            log("  Usando lista inicial disponivel no embed.")
-
-    try:
-        return collection_type, playlist_name, extract_tracks_from_embed_data(data)
-    except (KeyError, TypeError):
-        pass
-    try:
-        return collection_type, playlist_name, extract_tracks_from_page_data(data)
-    except (KeyError, TypeError) as error:
-        raise ValueError("Erro ao analisar a estrutura de dados do Spotify. " f"O layout do site pode ter mudado. Detalhes: {error}") from error
-
-
-def split_track_search_query(search_query: str) -> tuple[str, str]:
-    if " - " not in search_query:
-        return search_query.strip(), ""
-
-    track_name, artist_name = search_query.split(" - ", 1)
-    return track_name.strip(), artist_name.strip()
-
-
-def build_youtube_search_terms(search_query: str) -> list[str]:
-    return build_shared_youtube_search_terms(search_query)
-
-
-def summarize_download_error(error_text: str, used_cookie_file: bool = False) -> str:
-    if "Sign in to confirm" in error_text or "not a bot" in error_text:
-        if used_cookie_file:
-            return (
-                "YouTube exigiu autenticacao/anti-bot mesmo usando cookies.txt. "
-                "Exporte cookies novos do YouTube e substitua o arquivo ao lado do .exe."
-            )
-        return (
-            "YouTube bloqueou por anti-bot/login. "
-            "Coloque um cookies.txt valido ao lado do .exe e tente novamente."
-        )
-    if "Could not copy Chrome cookie database" in error_text or "Failed to decrypt with DPAPI" in error_text:
-        return (
-            "Nao foi possivel ler os cookies. "
-            "Coloque um cookies.txt valido ao lado do .exe e tente novamente."
-        )
-    if "Requested format is not available" in error_text or "Only images are available" in error_text:
-        return (
-            "O YouTube retornou o video sem formato de audio. "
-            "Instale o Node.js ou atualize o yt-dlp para resolver o challenge do YouTube."
-        )
-    return "Video nao encontrado ou bloqueado no YouTube."
-
-
-def shorten_error(error_text: str) -> str:
-    error_text = re.sub(r"\s+", " ", error_text).strip()
-    error_text = error_text.replace("ERROR: ", "")
-    return error_text[:700]
-
-
-def should_retry_with_cookies(error_text: str) -> bool:
-    retry_markers = [
-        "Sign in to confirm",
-        "not a bot",
-        "confirm your age",
-        "This video may be inappropriate",
-        "HTTP Error 429",
-        "Too Many Requests",
-    ]
-    return any(marker in error_text for marker in retry_markers)
-
-
-def should_retry_without_cookies(error_text: str) -> bool:
-    retry_markers = [
-        "Requested format is not available",
-        "HTTP Error 403",
-        "Forbidden",
-    ]
-    return any(marker in error_text for marker in retry_markers)
-
-
-def get_external_process_options() -> dict:
-    options = {"creationflags": 0}
-    if os.name == "nt":
-        options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = 0
-        options["startupinfo"] = startupinfo
-    return options
-
-
-def get_external_process_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    env["PYTHONIOENCODING"] = "utf-8"
-    return env
-
-
-def find_youtube_result(yt_dlp_path: Path, search_query: str, cookie_file: Path | None, log, album_name: str = "") -> tuple[str | None, str | None, str]:
-    command = [
-        str(yt_dlp_path), "--flat-playlist", "--default-search", "ytsearch5", "--skip-download",
-        "--dump-single-json", "--no-warnings", f"ytsearch5:{search_query}",
-    ]
-    if cookie_file:
-        command[1:1] = ["--cookies", str(cookie_file)]
-    log(f"  Consultando 5 resultados: {search_query}")
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            shell=False, env=get_external_process_env(), timeout=120, **get_external_process_options(),
-        )
-    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as error:
-        return None, None, f"Erro ao buscar no YouTube: {error}"
-
-    if result.returncode != 0:
-        error_text = "\n".join(part.strip() for part in [result.stdout, result.stderr] if part and part.strip())
-        return None, None, error_text or f"yt-dlp retornou codigo {result.returncode} ao buscar."
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        return None, None, f"Resposta de busca invalida do yt-dlp: {error}"
-
-    entries = payload.get("entries", []) if isinstance(payload, dict) else []
-    selected, scored = choose_youtube_result(entries, search_query, album_name)
-    for index, item in enumerate(scored, start=1):
-        entry = item["entry"]
-        channel = entry.get("channel") or entry.get("uploader") or "-"
-        log(f"  Resultado {index}: titulo={entry.get('title') or '-'} | canal={channel} | score={item['score']}")
-    if not selected:
-        return None, None, "Nenhum resultado com URL valida foi encontrado."
-
-    entry = selected["entry"]
-    channel = entry.get("channel") or entry.get("uploader") or "-"
-    log(f"  Resultado escolhido: titulo={entry.get('title') or '-'} | canal={channel} | score={selected['score']}")
-    return selected["target"], str(entry.get("title") or ""), ""
-
-
-def download_music(
-    search_query: str,
-    output_dir: str,
-    ffmpeg_location: str | None,
-    log,
-    source_album: str = "",
-) -> tuple[bool, str]:
-    output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
-    yt_dlp_path = get_yt_dlp_executable()
-    if not yt_dlp_path:
-        return False, "yt-dlp.exe nao foi encontrado. Reinstale o app ou instale o yt-dlp no ambiente."
-
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    cookie_file = get_cookie_file_path()
-    using_cookie_file = bool(cookie_file)
-    log(f"  URL/processamento: {search_query}")
-    log(f"  Pasta de saida: {output_path}")
-
-    target_url, _, search_error = find_youtube_result(
-        yt_dlp_path, search_query, cookie_file, log, source_album
-    )
-    if not target_url and cookie_file:
-        log("  Busca com cookies falhou; repetindo a consulta sem cookies.")
-        target_url, _, search_error = find_youtube_result(
-            yt_dlp_path, search_query, None, log, source_album
-        )
-    if not target_url:
-        log(f"  Falha ao escolher resultado: {shorten_error(search_error)}")
-        return False, summarize_download_error(search_error, using_cookie_file)
-
-    last_error_text = ""
-    cookie_modes = [cookie_file] if cookie_file else [None]
-    if cookie_file:
-        cookie_modes.append(None)
-    for cookie_mode_index, cookie_path in enumerate(cookie_modes, start=1):
-        command = [
-            str(yt_dlp_path), *get_youtube_runtime_args(), "--format", "bestaudio/best", "--check-formats",
-            "--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K",
-            "--no-playlist", "--no-warnings", "--windows-filenames", "--output", output_template,
-        ]
-        if ffmpeg_location:
-            command.extend(["--ffmpeg-location", ffmpeg_location])
-        if cookie_path:
-            command.extend(["--cookies", str(cookie_path)])
-        command.append(target_url)
-        safe_command = " ".join(f'"{part}"' if " " in part else part for part in command)
-        log(f"  Comando externo: {safe_command}")
-        try:
-            result = subprocess.run(
-                command, cwd=str(output_path), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", shell=False, env=get_external_process_env(),
-                timeout=1800, **get_external_process_options(),
-            )
-        except FileNotFoundError:
-            return False, f"Executavel nao encontrado: {yt_dlp_path}"
-        except PermissionError as error:
-            return False, f"Sem permissao para executar ou gravar em {output_path}: {error}"
-        except subprocess.TimeoutExpired as error:
-            return False, f"Timeout no yt-dlp apos {error.timeout} segundos."
-
-        combined_output = "\n".join(part.strip() for part in [result.stdout, result.stderr] if part and part.strip())
-        if combined_output:
-            for line in combined_output.splitlines()[-18:]:
-                log(f"    {line}")
-        if result.returncode == 0:
-            log("    Download concluido e convertido para MP3.")
-            return True, "OK"
-
-        last_error_text = combined_output or f"yt-dlp retornou codigo {result.returncode} sem mensagem."
-        log(f"    Falha na etapa yt-dlp/FFmpeg. Codigo: {result.returncode}")
-        log(f"    Erro real: {shorten_error(last_error_text)}")
-        if cookie_path and cookie_file and should_retry_without_cookies(last_error_text) and cookie_mode_index < len(cookie_modes):
-            continue
-        if "Sign in to confirm" in last_error_text or "not a bot" in last_error_text:
-            return False, summarize_download_error(last_error_text, using_cookie_file)
-
-    return False, summarize_download_error(last_error_text, using_cookie_file)
 
 
 class SplashScreen(customtkinter.CTk):
@@ -1088,13 +508,13 @@ class BibliotecaOfflineApp(customtkinter.CTk):
         button_frame = customtkinter.CTkFrame(help_window, fg_color="transparent")
         button_frame.grid(row=3, column=0, padx=24, pady=(0, 24))
 
-        youtube_button = customtkinter.CTkButton(
+        extension_button = customtkinter.CTkButton(
             button_frame,
             text="Instalar extensao",
             width=140,
             command=lambda: webbrowser.open(COOKIE_EXTENSION_URL),
         )
-        youtube_button.grid(row=0, column=0, padx=(0, 10))
+        extension_button.grid(row=0, column=0, padx=(0, 10))
 
         youtube_button = customtkinter.CTkButton(
             button_frame,
@@ -1371,7 +791,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             self.append_technical_log("-" * 70)
 
             successes = 0
-            failures = []
+            failures: list[tuple[str, str]] = []
             self.set_progress(0, len(tracks))
             self.set_summary("em andamento", len(tracks), successes, len(failures), len(tracks))
 
@@ -1380,6 +800,8 @@ class BibliotecaOfflineApp(customtkinter.CTk):
             active_downloads = min(MAX_PARALLEL_DOWNLOADS, total_tracks)
             self.append_log(f"Modo rapido ativado: ate {active_downloads} downloads ao mesmo tempo.")
             self.append_technical_log(f"Downloads paralelos configurados: {active_downloads}")
+
+            source_album = playlist_name if collection_type == "album" else ""
 
             def run_track_download(index: int, track: str) -> tuple[int, str, bool, str]:
                 def prefixed_log(message: str) -> None:
@@ -1392,7 +814,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                     str(output_dir),
                     ffmpeg_location,
                     prefixed_log,
-                    playlist_name if collection_type == "album" else "",
+                    source_album,
                 )
                 return index, track, success, message
 

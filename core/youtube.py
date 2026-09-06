@@ -21,6 +21,10 @@ PENALTIES = {
     "show": -40,
     "concert": -40,
 }
+BAD_RESULT_TERMS = [
+    "karaoke", "cover", "instrumental", "nightcore", "sped up", "slowed",
+    "remix", "live", "aula", "tutorial",
+]
 
 
 def normalize_text(value: str) -> str:
@@ -44,6 +48,12 @@ def is_live_source(track_name: str, album_name: str = "") -> bool:
 
 def _has_phrase(text: str, phrase: str) -> bool:
     return bool(phrase and phrase in text)
+
+
+def contains_bad_result_term(title: str, original_query: str) -> bool:
+    normalized_title = normalize_text(title)
+    normalized_query = normalize_text(original_query)
+    return any(term in normalized_title and term not in normalized_query for term in BAD_RESULT_TERMS)
 
 
 def score_youtube_candidate(
@@ -99,14 +109,24 @@ def choose_youtube_result(
     entries: list[dict[str, Any]],
     search_query: str,
     album_name: str = "",
+    log=None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    """Ordena candidatos por score e pelos criterios de desempate definidos."""
+    """
+    Ordena candidatos por score e pelos criterios de desempate definidos.
+    Resultados com titulo suspeito (karaoke, cover, live, etc. ausentes da
+    busca original) sao descartados antes da pontuacao.
+    """
     scored = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         target = entry.get("webpage_url") or entry.get("original_url") or entry.get("url")
         if not target:
+            continue
+        title = str(entry.get("title") or "").strip()
+        if title and contains_bad_result_term(title, search_query):
+            if log:
+                log(f"  Descartado por titulo suspeito: {title}")
             continue
         score, flags = score_youtube_candidate(entry, search_query, album_name)
         scored.append({"entry": entry, "target": str(target), "score": score, "flags": flags})
@@ -123,14 +143,9 @@ def choose_youtube_result(
     )
     return (scored[0] if scored else None), scored
 
-BAD_RESULT_TERMS = [
-    "karaoke", "cover", "instrumental", "nightcore", "sped up", "slowed",
-    "remix", "live", "aula", "tutorial",
-]
-
 
 def build_youtube_search_terms(search_query: str) -> list[str]:
-    """Compatibilidade com o downloader auxiliar legado."""
+    """Termos de busca alternativos para retry quando o primeiro falha."""
     track_name, artist_name = split_track_search_query(search_query)
     combined = " ".join(part for part in [track_name, artist_name] if part).strip()
     terms = []
@@ -145,22 +160,3 @@ def build_youtube_search_terms(search_query: str) -> list[str]:
         terms.append(f"ytsearch1:{track_name}")
     terms.append(f"ytsearch1:{search_query.replace(' - ', ' ')}")
     return list(dict.fromkeys(terms))
-
-
-def contains_bad_result_term(title: str, original_query: str) -> bool:
-    normalized_title = normalize_text(title)
-    normalized_query = normalize_text(original_query)
-    return any(term in normalized_title and term not in normalized_query for term in BAD_RESULT_TERMS)
-
-
-def resolve_download_target(ydl: Any, search_term: str, original_query: str) -> tuple[str | None, str | None, str | None]:
-    info = ydl.extract_info(search_term, download=False)
-    entries = info.get("entries") if isinstance(info, dict) else None
-    candidate = next((entry for entry in entries if entry), None) if entries else info
-    if not isinstance(candidate, dict):
-        return None, None, "nenhum resultado encontrado"
-    title = str(candidate.get("title") or "").strip()
-    if title and contains_bad_result_term(title, original_query):
-        return None, title, "resultado rejeitado por titulo suspeito"
-    target = candidate.get("webpage_url") or candidate.get("original_url") or candidate.get("url")
-    return (str(target), title or None, None) if target else (None, title or None, "resultado sem URL valida")
