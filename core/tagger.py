@@ -100,6 +100,8 @@ def apply_id3_tags(
                         data=cover_path.read_bytes(),
                     )
                 )
+        else:
+            log("    Spotify nao forneceu URL de capa para esta faixa.")
 
         audio.save(v2_version=3)
         return True

@@ -24,13 +24,14 @@
 ### Fixed
 
 - Correção da atualização do indicador de downloads paralelos quando a fila usa metadados `TrackInfo`.
+- Correção da extração das capas Spotify em `albumOfTrack.coverArt.sources`.
 
 ### Packaging
 
 - Versão do produto atualizada para `2.0.0`.
 - Executável: `release/BibliotecaOffline_v2.0.0.exe`.
 - Instalador Inno Setup: `release/BibliotecaOffline_Setup_v2.0.0.exe`.
-- SHA-256 do instalador: `4B048CB3065D69A1F439EEA0FA99D6B787B3C9F4ED5750F92FA9236B86ABEE55`.
+- SHA-256 do instalador: `E1CC46756BA745BAF2F921E83C3BB83553B83E42FFA48A0D7A16CE9991A3390D`.
 - O instalador inclui o executável PyInstaller, FFmpeg, FFprobe, yt-dlp e Deno.
 
 ### Backup

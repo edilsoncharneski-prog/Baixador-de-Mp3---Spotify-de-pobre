@@ -36,7 +36,7 @@ def _extract_image_url(value) -> str | None:
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
                 return candidate
-        for key in ("coverArt", "images", "image", "album", "cover"):
+        for key in ("coverArt", "sources", "images", "image", "imageUrl", "album", "albumOfTrack", "cover"):
             result = _extract_image_url(value.get(key))
             if result:
                 return result
@@ -82,6 +82,7 @@ def _track_info_from_item(item: dict, album_name: str = "", index: int | None = 
     if isinstance(album_value, dict):
         album = album_value.get("name", "")
     album = album or nested_track.get("album", {}).get("name", "")
+    album = album or item.get("albumOfTrack", {}).get("name", "")
     album = album or album_name
     if not title or not artist:
         return None
