@@ -25,6 +25,7 @@
 
 - Versão do produto atualizada para `2.0.0`.
 - Executável: `release/BibliotecaOffline_v2.0.0.exe`.
+- Instalador Inno Setup: `release/BibliotecaOffline_Setup_v2.0.0.exe`.
 - SHA-256: `BA06C48A75402790037049F31541532725A9FEBC517644A34859BFF43D8D4EDB`.
 
 ### Backup
