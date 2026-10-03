@@ -26,7 +26,8 @@
 - Versão do produto atualizada para `2.0.0`.
 - Executável: `release/BibliotecaOffline_v2.0.0.exe`.
 - Instalador Inno Setup: `release/BibliotecaOffline_Setup_v2.0.0.exe`.
-- SHA-256: `BA06C48A75402790037049F31541532725A9FEBC517644A34859BFF43D8D4EDB`.
+- SHA-256 do instalador: `4000995AB351D2D7D53EF9B695DC1E25A7A1DE8913491185455EEC050C83368B`.
+- O instalador inclui o executável PyInstaller, FFmpeg, FFprobe, yt-dlp e Deno.
 
 ### Backup
 
