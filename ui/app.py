@@ -840,7 +840,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                         return_when=concurrent.futures.FIRST_COMPLETED,
                     )
                     if not done:
-                        running = ", ".join(track for _, track in pending.values())
+                        running = ", ".join(str(track) for _, track in pending.values())
                         self.set_current_track(f"Processando em paralelo: {running}")
                         continue
 

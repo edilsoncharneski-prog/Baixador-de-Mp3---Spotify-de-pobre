@@ -21,12 +21,16 @@
 - Logs técnicos e resumo de progresso.
 - Empacotamento standalone com PyInstaller.
 
+### Fixed
+
+- Correção da atualização do indicador de downloads paralelos quando a fila usa metadados `TrackInfo`.
+
 ### Packaging
 
 - Versão do produto atualizada para `2.0.0`.
 - Executável: `release/BibliotecaOffline_v2.0.0.exe`.
 - Instalador Inno Setup: `release/BibliotecaOffline_Setup_v2.0.0.exe`.
-- SHA-256 do instalador: `4000995AB351D2D7D53EF9B695DC1E25A7A1DE8913491185455EEC050C83368B`.
+- SHA-256 do instalador: `4B048CB3065D69A1F439EEA0FA99D6B787B3C9F4ED5750F92FA9236B86ABEE55`.
 - O instalador inclui o executável PyInstaller, FFmpeg, FFprobe, yt-dlp e Deno.
 
 ### Backup
