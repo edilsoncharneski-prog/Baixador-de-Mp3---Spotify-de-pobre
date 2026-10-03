@@ -2,7 +2,7 @@
 
 Aplicativo em Python para montar uma biblioteca local de musicas em MP3 a partir de uma playlist ou album publico do Spotify. O app le a lista de faixas, monta buscas no YouTube e chama `yt-dlp.exe` diretamente para baixar e converter o audio com FFmpeg.
 
-Versao atual: `v1.0.11`
+Versao atual: `v2.0.0`
 
 ## Recursos
 

@@ -12,7 +12,7 @@ from core.downloader import (
     get_yt_dlp_executable,
     migrate_legacy_cookie_file,
 )
-from core.spotify_parser import extract_playlist_data
+from core.spotify_parser import extract_playlist_data_with_metadata
 
 
 DEFAULT_OUTPUT_DIR = Path.home() / "Music" / "Biblioteca Offline"
@@ -30,7 +30,7 @@ def main() -> None:
 
     print("\n[ETAPA 1/3] Extraindo informacoes do Spotify...")
     try:
-        collection_type, playlist_name, musicas = extract_playlist_data(playlist_url, print)
+        collection_type, playlist_name, musicas = extract_playlist_data_with_metadata(playlist_url, print)
         if not musicas:
             print("A playlist esta vazia.")
             sys.exit(0)

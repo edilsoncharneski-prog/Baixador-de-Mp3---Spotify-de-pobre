@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from core.models import TrackInfo
+
 
 APP_NAME = "Biblioteca Offline"
 SPOTIFY_PLAYLIST_QUERY_URL = "https://api-partner.spotify.com/pathfinder/v1/query"
@@ -25,6 +27,75 @@ USER_AGENT = (
 
 def _noop_log(message: str) -> None:
     pass
+
+
+def _extract_image_url(value) -> str | None:
+    """Extrai a primeira URL de capa conhecida nas estruturas do Spotify."""
+    if isinstance(value, dict):
+        for key in ("cover_url", "url"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+                return candidate
+        for key in ("coverArt", "images", "image", "album", "cover"):
+            result = _extract_image_url(value.get(key))
+            if result:
+                return result
+    elif isinstance(value, list):
+        for item in value:
+            result = _extract_image_url(item)
+            if result:
+                return result
+    return None
+
+
+def _artist_names(value) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        names = []
+        for item in value:
+            if isinstance(item, dict):
+                name = item.get("name") or item.get("profile", {}).get("name")
+                if name:
+                    names.append(str(name))
+        return ", ".join(names)
+    if isinstance(value, dict):
+        return _artist_names(value.get("items") or value.get("artists"))
+    return ""
+
+
+def _to_int(value) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _track_info_from_item(item: dict, album_name: str = "", index: int | None = None, total: int | None = None) -> TrackInfo | None:
+    title = item.get("title") or item.get("name")
+    artist = item.get("subtitle") or _artist_names(item.get("artists"))
+    nested_track = item.get("track") if isinstance(item.get("track"), dict) else {}
+    title = title or nested_track.get("name")
+    artist = artist or _artist_names(nested_track.get("artists"))
+    album_value = item.get("album")
+    album = album_value if isinstance(album_value, str) else ""
+    if isinstance(album_value, dict):
+        album = album_value.get("name", "")
+    album = album or nested_track.get("album", {}).get("name", "")
+    album = album or album_name
+    if not title or not artist:
+        return None
+
+    return TrackInfo(
+        title=str(title),
+        artist=str(artist),
+        album=str(album or ""),
+        track_number=_to_int(item.get("trackNumber") or nested_track.get("trackNumber") or index),
+        track_total=_to_int(item.get("trackTotal") or total),
+        disc_number=_to_int(item.get("discNumber") or nested_track.get("discNumber")),
+        disc_total=_to_int(item.get("discTotal")),
+        cover_url=_extract_image_url(item) or _extract_image_url(nested_track),
+    )
 
 
 def sanitize_folder_name(folder_name: str) -> str:
@@ -100,6 +171,17 @@ def extract_tracks_from_embed_data(data: dict) -> list[str]:
     return [f"{item['title']} - {item['subtitle']}" for item in track_items]
 
 
+def extract_track_info_from_embed_data(data: dict, album_name: str = "") -> list[TrackInfo]:
+    track_items = data["props"]["pageProps"]["state"]["data"]["entity"]["trackList"]
+    total = len(track_items)
+    tracks = []
+    for index, item in enumerate(track_items, start=1):
+        track = _track_info_from_item(item, album_name, index, total)
+        if track:
+            tracks.append(track)
+    return tracks
+
+
 def extract_tracks_from_page_data(data: dict) -> list[str]:
     track_items = data["props"]["pageProps"]["data"]["trackList"]["items"]
 
@@ -113,6 +195,17 @@ def extract_tracks_from_page_data(data: dict) -> list[str]:
             artist_names = str(artists)
         tracks.append(f"{track_name} - {artist_names}")
 
+    return tracks
+
+
+def extract_track_info_from_page_data(data: dict) -> list[TrackInfo]:
+    track_items = data["props"]["pageProps"]["data"]["trackList"]["items"]
+    total = len(track_items)
+    tracks = []
+    for index, item in enumerate(track_items, start=1):
+        track = _track_info_from_item(item, index=index, total=total)
+        if track:
+            tracks.append(track)
     return tracks
 
 
@@ -136,27 +229,25 @@ def extract_access_token_from_embed_data(data: dict) -> str | None:
 
 
 def extract_track_from_graphql_item(item: dict) -> str | None:
+    track = extract_track_info_from_graphql_item(item)
+    return track.search_query if track else None
+
+
+def extract_track_info_from_graphql_item(item: dict) -> TrackInfo | None:
     track = item.get("itemV2", {}).get("data", {})
     if track.get("__typename") != "Track":
         return None
 
-    track_name = track.get("name")
-    artist_items = track.get("artists", {}).get("items", [])
-    artist_names = [
-        artist.get("profile", {}).get("name")
-        for artist in artist_items
-        if artist.get("profile", {}).get("name")
-    ]
-
-    if not track_name or not artist_names:
-        return None
-
-    return f"{track_name} - {', '.join(artist_names)}"
+    return _track_info_from_item(track)
 
 
 def fetch_all_tracks_from_graphql(playlist_id: str, access_token: str, log=None) -> list[str]:
+    return [track.search_query for track in fetch_all_track_info_from_graphql(playlist_id, access_token, log)]
+
+
+def fetch_all_track_info_from_graphql(playlist_id: str, access_token: str, log=None) -> list[TrackInfo]:
     log = log or _noop_log
-    tracks = []
+    tracks: list[TrackInfo] = []
     offset = 0
     limit = 100
 
@@ -198,7 +289,7 @@ def fetch_all_tracks_from_graphql(playlist_id: str, access_token: str, log=None)
         content = playlist["content"]
         items = content.get("items", [])
         for item in items:
-            track = extract_track_from_graphql_item(item)
+            track = extract_track_info_from_graphql_item(item)
             if track:
                 tracks.append(track)
 
@@ -286,6 +377,73 @@ def extract_playlist_data(playlist_url: str, log=None) -> tuple[str, str, list[s
             "Erro ao analisar a estrutura de dados do Spotify. "
             f"O layout do site pode ter mudado. Detalhes: {error}"
         ) from error
+
+
+def extract_playlist_data_with_metadata(playlist_url: str, log=None) -> tuple[str, str, list[TrackInfo]]:
+    """Versao enriquecida; a funcao legada acima permanece compativel."""
+    log = log or _noop_log
+    playlist_url = normalize_spotify_playlist_url(playlist_url, log)
+    collection_type, playlist_id = extract_spotify_collection(playlist_url)
+    embed_url = build_embed_playlist_url(playlist_url)
+
+    log("Conectando ao Spotify pela pagina embed...")
+    response = requests.get(embed_url, headers={"User-Agent": USER_AGENT}, timeout=20)
+    response.raise_for_status()
+    response.encoding = "utf-8"
+    soup = BeautifulSoup(response.text, "html.parser")
+    script_tag = soup.find("script", id="__NEXT_DATA__")
+    if not script_tag:
+        raise ValueError("Nao foi possivel encontrar os dados do Spotify. O link e publico?")
+    try:
+        data = json.loads(script_tag.string)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise ValueError(f"Erro ao ler JSON do Spotify: {error}") from error
+
+    if collection_type == "track":
+        entity = data["props"]["pageProps"]["state"]["data"]["entity"]
+        track = _track_info_from_item(entity)
+        if not track:
+            raise ValueError("Nao foi possivel extrair os metadados da faixa do Spotify.")
+        return collection_type, sanitize_folder_name(track.title), [track]
+
+    playlist_name = "Spotify"
+    try:
+        playlist_name = extract_playlist_name_from_embed_data(data)
+    except (KeyError, TypeError):
+        try:
+            playlist_name = extract_playlist_name_from_page_data(data)
+        except (KeyError, TypeError):
+            pass
+
+    access_token = extract_access_token_from_embed_data(data)
+    if collection_type == "playlist" and access_token:
+        try:
+            log("Buscando todas as paginas da playlist...")
+            tracks = fetch_all_track_info_from_graphql(playlist_id, access_token, log)
+            if tracks:
+                return collection_type, playlist_name, tracks
+        except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as error:
+            log(f"  Nao foi possivel paginar pelo Spotify: {error}")
+            log("  Usando lista inicial disponivel no embed.")
+
+    try:
+        album_name = playlist_name if collection_type == "album" else ""
+        tracks = extract_track_info_from_embed_data(data, album_name)
+        if tracks:
+            return collection_type, playlist_name, tracks
+    except (KeyError, TypeError):
+        pass
+    try:
+        tracks = extract_track_info_from_page_data(data)
+        if tracks:
+            return collection_type, playlist_name, tracks
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "Erro ao analisar os metadados do Spotify. "
+            f"O layout do site pode ter mudado. Detalhes: {error}"
+        ) from error
+
+    raise ValueError("Nenhuma faixa com metadados validos foi encontrada no Spotify.")
 
 
 def extract_playlist_tracks(playlist_url: str) -> list[str]:

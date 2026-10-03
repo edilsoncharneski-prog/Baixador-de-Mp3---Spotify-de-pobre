@@ -25,12 +25,12 @@ from core.downloader import (
     get_yt_dlp_executable,
     migrate_legacy_cookie_file,
 )
-from core.spotify_parser import extract_playlist_data
+from core.spotify_parser import extract_playlist_data_with_metadata
 from icon_data import ICON_DATA_BASE64
 
 
 APP_EXECUTABLE_NAME = "BibliotecaOffline"
-APP_VERSION = "1.0.11"
+APP_VERSION = "2.0.0"
 APP_AUTHOR = "Edilson Charneski"
 APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
 APP_USAGE_NOTE = (
@@ -771,7 +771,7 @@ class BibliotecaOfflineApp(customtkinter.CTk):
                     "O app tentara baixar sem cookies. Se o YouTube bloquear por login/anti-bot, coloque cookies.txt nesse local."
                 )
 
-            collection_type, playlist_name, tracks = extract_playlist_data(
+            collection_type, playlist_name, tracks = extract_playlist_data_with_metadata(
                 playlist_url,
                 self.append_technical_log,
             )

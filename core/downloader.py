@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from core.youtube import choose_youtube_result
+from core.models import TrackInfo, ensure_track_info
+from core.tagger import apply_id3_tags
 
 
 APP_NAME = "Biblioteca Offline"
@@ -280,11 +282,12 @@ def _run_yt_dlp_download(
     ffmpeg_location: str | None,
     cookie_path: Path | None,
     log,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, Path | None]:
     command = [
         str(yt_dlp_path), *get_youtube_runtime_args(), "--format", "bestaudio/best", "--check-formats",
         "--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K",
-        "--no-playlist", "--no-warnings", "--windows-filenames", "--output", output_template,
+        "--no-playlist", "--no-warnings", "--windows-filenames",
+        "--print", "after_move:filepath", "--output", output_template,
     ]
     if ffmpeg_location:
         command.extend(["--ffmpeg-location", ffmpeg_location])
@@ -300,11 +303,11 @@ def _run_yt_dlp_download(
             timeout=1800, **get_external_process_options(),
         )
     except FileNotFoundError:
-        return False, f"Executavel nao encontrado: {yt_dlp_path}"
+        return False, f"Executavel nao encontrado: {yt_dlp_path}", None
     except PermissionError as error:
-        return False, f"Sem permissao para executar ou gravar em {output_dir}: {error}"
+        return False, f"Sem permissao para executar ou gravar em {output_dir}: {error}", None
     except subprocess.TimeoutExpired as error:
-        return False, f"Timeout no yt-dlp apos {error.timeout} segundos."
+        return False, f"Timeout no yt-dlp apos {error.timeout} segundos.", None
 
     combined_output = "\n".join(part.strip() for part in [result.stdout, result.stderr] if part and part.strip())
     if combined_output:
@@ -312,16 +315,23 @@ def _run_yt_dlp_download(
             log(f"    {line}")
     if result.returncode == 0:
         log("    Download concluido e convertido para MP3.")
-        return True, "OK"
+        mp3_path = None
+        for line in reversed(combined_output.splitlines()):
+            candidate = Path(line.strip().strip('"'))
+            if candidate.suffix.lower() == ".mp3":
+                mp3_path = candidate if candidate.is_absolute() else Path(output_dir) / candidate
+                if mp3_path.is_file():
+                    break
+        return True, "OK", mp3_path
 
     error_text = combined_output or f"yt-dlp retornou codigo {result.returncode} sem mensagem."
     log(f"    Falha na etapa yt-dlp/FFmpeg. Codigo: {result.returncode}")
     log(f"    Erro real: {shorten_error(error_text)}")
-    return False, error_text
+    return False, error_text, None
 
 
 def download_music(
-    search_query: str,
+    search_query: str | TrackInfo,
     output_dir: str,
     ffmpeg_location: str | None = None,
     log=None,
@@ -332,6 +342,8 @@ def download_music(
     yt-dlp + FFmpeg, com retry automatico com/sem cookies conforme o erro.
     """
     log = log or _noop_log
+    track_info = ensure_track_info(search_query)
+    search_query = track_info.search_query
     yt_dlp_path = get_yt_dlp_executable()
     if not yt_dlp_path:
         return False, "yt-dlp.exe nao foi encontrado. Reinstale o app ou instale o yt-dlp no ambiente."
@@ -366,11 +378,17 @@ def download_music(
     while attempt < len(cookie_modes):
         cookie_path = cookie_modes[attempt]
         attempt += 1
-        success, error_text = _run_yt_dlp_download(
+        success, error_text, mp3_path = _run_yt_dlp_download(
             yt_dlp_path, target_url, output_dir, output_template,
             ffmpeg_location, cookie_path, log,
         )
         if success:
+            if mp3_path and isinstance(track_info, TrackInfo):
+                tagger_cache = Path(output_dir) / ".metadata" / "covers"
+                if apply_id3_tags(mp3_path, track_info, tagger_cache, log):
+                    log("    Metadados Spotify aplicados ao MP3.")
+                else:
+                    log("    Download mantido; tagging Spotify nao foi concluido.")
             return True, "OK"
 
         retry_modes = _build_cookie_retry_modes(error_text, cookie_file, cookie_path)
@@ -386,7 +404,7 @@ def download_music(
 
 
 def download_tracks(
-    tracks: list[str],
+    tracks: list[str | TrackInfo],
     output_dir: str,
     ffmpeg_location: str | None = None,
     log=None,
