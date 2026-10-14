@@ -8,7 +8,7 @@ import sysconfig
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from core.youtube import choose_youtube_result
+from core.youtube import build_youtube_search_terms, choose_youtube_result, is_playback_title
 from core.models import TrackInfo, ensure_track_info
 from core.tagger import apply_id3_tags
 
@@ -234,44 +234,56 @@ def find_youtube_result(
     log=None,
     album_name: str = "",
 ) -> tuple[str | None, str | None, str]:
-    """Consulta os 5 primeiros resultados do YouTube e escolhe o melhor pelo score."""
+    """Consulta resultados do YouTube (descartando playbacks e resultados ruins) e escolhe o melhor."""
     log = log or _noop_log
-    command = [
-        str(yt_dlp_path), "--flat-playlist", "--default-search", "ytsearch5", "--skip-download",
-        "--dump-single-json", "--no-warnings", f"ytsearch5:{search_query}",
-    ]
-    if cookie_file:
-        command[1:1] = ["--cookies", str(cookie_file)]
-    log(f"  Consultando 5 resultados: {search_query}")
-    try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            shell=False, env=get_external_process_env(), timeout=120, **get_external_process_options(),
-        )
-    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as error:
-        return None, None, f"Erro ao buscar no YouTube: {error}"
+    queries_to_try = [f"ytsearch10:{search_query}"]
+    for alt in build_youtube_search_terms(search_query):
+        if alt not in queries_to_try:
+            queries_to_try.append(alt)
 
-    if result.returncode != 0:
-        error_text = "\n".join(part.strip() for part in [result.stdout, result.stderr] if part and part.strip())
-        return None, None, error_text or f"yt-dlp retornou codigo {result.returncode} ao buscar."
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        return None, None, f"Resposta de busca invalida do yt-dlp: {error}"
+    last_error = ""
+    for current_search in queries_to_try:
+        command = [
+            str(yt_dlp_path), "--flat-playlist", "--skip-download",
+            "--dump-single-json", "--no-warnings", current_search,
+        ]
+        if cookie_file:
+            command[1:1] = ["--cookies", str(cookie_file)]
+        clean_search = current_search.replace("ytsearch10:", "")
+        log(f"  Consultando YouTube: {clean_search}")
+        try:
+            result = subprocess.run(
+                command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                shell=False, env=get_external_process_env(), timeout=120, **get_external_process_options(),
+            )
+        except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired) as error:
+            return None, None, f"Erro ao buscar no YouTube: {error}"
 
-    entries = payload.get("entries", []) if isinstance(payload, dict) else []
-    selected, scored = choose_youtube_result(entries, search_query, album_name, log)
-    for index, item in enumerate(scored, start=1):
-        entry = item["entry"]
-        channel = entry.get("channel") or entry.get("uploader") or "-"
-        log(f"  Resultado {index}: titulo={entry.get('title') or '-'} | canal={channel} | score={item['score']}")
-    if not selected:
-        return None, None, "Nenhum resultado com URL valida foi encontrado."
+        if result.returncode != 0:
+            error_text = "\n".join(part.strip() for part in [result.stdout, result.stderr] if part and part.strip())
+            last_error = error_text or f"yt-dlp retornou codigo {result.returncode} ao buscar."
+            continue
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            last_error = f"Resposta de busca invalida do yt-dlp: {error}"
+            continue
 
-    entry = selected["entry"]
-    channel = entry.get("channel") or entry.get("uploader") or "-"
-    log(f"  Resultado escolhido: titulo={entry.get('title') or '-'} | canal={channel} | score={selected['score']}")
-    return selected["target"], str(entry.get("title") or ""), ""
+        entries = payload.get("entries", []) if isinstance(payload, dict) else []
+        selected, scored = choose_youtube_result(entries, search_query, album_name, log)
+        for index, item in enumerate(scored, start=1):
+            entry = item["entry"]
+            channel = entry.get("channel") or entry.get("uploader") or "-"
+            log(f"  Resultado {index}: titulo={entry.get('title') or '-'} | canal={channel} | score={item['score']}")
+        if selected:
+            entry = selected["entry"]
+            channel = entry.get("channel") or entry.get("uploader") or "-"
+            log(f"  Resultado escolhido: titulo={entry.get('title') or '-'} | canal={channel} | score={selected['score']}")
+            return selected["target"], str(entry.get("title") or ""), ""
+
+        log("  Candidatos da busca eram playbacks ou invalidos. Tentando termo alternativo...")
+
+    return None, None, last_error or "Nenhum resultado valido (nao-playback) foi encontrado no YouTube."
 
 
 def _run_yt_dlp_download(
@@ -344,6 +356,10 @@ def download_music(
     log = log or _noop_log
     track_info = ensure_track_info(search_query)
     search_query = track_info.search_query
+    if is_playback_title(track_info.title) or is_playback_title(search_query):
+        log(f"  [PROIBIDO] '{track_info.title}' e um playback. Download cancelado.")
+        return False, "Download cancelado: faixas em playback estao proibidas."
+
     yt_dlp_path = get_yt_dlp_executable()
     if not yt_dlp_path:
         return False, "yt-dlp.exe nao foi encontrado. Reinstale o app ou instale o yt-dlp no ambiente."
@@ -358,7 +374,7 @@ def download_music(
     log(f"  URL/processamento: {search_query}")
     log(f"  Pasta de saida: {output_path}")
 
-    search_cookie_modes: list[Path | None] = [cookie_file] if cookie_file else [None]
+    search_cookie_modes: list[Path | None] = [cookie_file, None] if cookie_file else [None]
     target_url = None
     search_error = ""
     for cookie_mode in search_cookie_modes:
@@ -367,7 +383,7 @@ def download_music(
         )
         if target_url:
             break
-        if cookie_mode and search_cookie_modes[-1] is None:
+        if cookie_mode and None in search_cookie_modes:
             log("  Busca com cookies falhou; repetindo a consulta sem cookies.")
     if not target_url:
         log(f"  Falha ao escolher resultado: {shorten_error(search_error)}")

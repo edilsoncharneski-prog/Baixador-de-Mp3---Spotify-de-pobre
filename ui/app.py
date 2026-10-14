@@ -30,7 +30,7 @@ from icon_data import ICON_DATA_BASE64
 
 
 APP_EXECUTABLE_NAME = "BibliotecaOffline"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.0.1"
 APP_AUTHOR = "Edilson Charneski"
 APP_COPYRIGHT = "Copyright (c) 2026 Edilson Charneski."
 APP_USAGE_NOTE = (

@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from core.models import TrackInfo
+from core.youtube import is_playback_title
 
 
 APP_NAME = "Biblioteca Offline"
@@ -306,11 +307,44 @@ def fetch_all_track_info_from_graphql(playlist_id: str, access_token: str, log=N
     return tracks
 
 
+def filter_playback_track_strings(tracks: list[str], log=None) -> list[str]:
+    """Descarta faixas em formato string cujo titulo seja playback/karaoke."""
+    log = log or _noop_log
+    valid_tracks: list[str] = []
+    ignored_count = 0
+    for track in tracks:
+        title = track.split(" - ", 1)[0]
+        if is_playback_title(title) or is_playback_title(track):
+            ignored_count += 1
+            log(f"  [PROIBIDO] Faixa de playback ignorada: {track}")
+        else:
+            valid_tracks.append(track)
+    if ignored_count:
+        log(f"  Filtro de seguranca: {ignored_count} faixa(s) de playback foram ignoradas e proibidas.")
+    return valid_tracks
+
+
+def filter_playback_tracks(tracks: list[TrackInfo], log=None) -> list[TrackInfo]:
+    """Descarta faixas TrackInfo cujo titulo seja playback/karaoke."""
+    log = log or _noop_log
+    valid_tracks: list[TrackInfo] = []
+    ignored_count = 0
+    for track in tracks:
+        if is_playback_title(track.title):
+            ignored_count += 1
+            log(f"  [PROIBIDO] Faixa de playback ignorada: {track.title} - {track.artist}")
+        else:
+            valid_tracks.append(track)
+    if ignored_count:
+        log(f"  Filtro de seguranca: {ignored_count} faixa(s) de playback foram ignoradas e proibidas.")
+    return valid_tracks
+
+
 def extract_playlist_data(playlist_url: str, log=None) -> tuple[str, str, list[str]]:
     """
     Extrai (tipo, nome, faixas) de uma playlist, album ou faixa publica do Spotify
     atraves do parsing do HTML da pagina embed (bloco __NEXT_DATA__), com paginacao
-    via GraphQL quando um access token esta disponivel.
+    via GraphQL quando um access token esta disponivel. Playbacks sao estritamente proibidos.
     """
     log = log or _noop_log
     playlist_url = normalize_spotify_playlist_url(playlist_url, log)
@@ -334,6 +368,8 @@ def extract_playlist_data(playlist_url: str, log=None) -> tuple[str, str, list[s
     if collection_type == "track":
         entity = data["props"]["pageProps"]["state"]["data"]["entity"]
         track_name = str(entity.get("title") or entity.get("name") or "Spotify")
+        if is_playback_title(track_name):
+            raise ValueError(f"A faixa '{track_name}' e um playback. Downloads de playback estao proibidos.")
         artists = entity.get("artists") or []
         artist_names = ", ".join(
             str(artist.get("name"))
@@ -357,31 +393,37 @@ def extract_playlist_data(playlist_url: str, log=None) -> tuple[str, str, list[s
             pass
 
     access_token = extract_access_token_from_embed_data(data)
+    raw_tracks = None
     if collection_type == "playlist" and access_token:
         try:
             log("Buscando todas as paginas da playlist...")
-            tracks = fetch_all_tracks_from_graphql(playlist_id, access_token, log)
-            if tracks:
-                return collection_type, playlist_name, tracks
+            raw_tracks = fetch_all_tracks_from_graphql(playlist_id, access_token, log)
         except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as error:
             log(f"  Nao foi possivel paginar pelo Spotify: {error}")
             log("  Usando lista inicial disponivel no embed.")
 
-    try:
-        return collection_type, playlist_name, extract_tracks_from_embed_data(data)
-    except (KeyError, TypeError):
-        pass
-    try:
-        return collection_type, playlist_name, extract_tracks_from_page_data(data)
-    except (KeyError, TypeError) as error:
-        raise ValueError(
-            "Erro ao analisar a estrutura de dados do Spotify. "
-            f"O layout do site pode ter mudado. Detalhes: {error}"
-        ) from error
+    if not raw_tracks:
+        try:
+            raw_tracks = extract_tracks_from_embed_data(data)
+        except (KeyError, TypeError):
+            pass
+    if not raw_tracks:
+        try:
+            raw_tracks = extract_tracks_from_page_data(data)
+        except (KeyError, TypeError) as error:
+            raise ValueError(
+                "Erro ao analisar a estrutura de dados do Spotify. "
+                f"O layout do site pode ter mudado. Detalhes: {error}"
+            ) from error
+
+    valid_tracks = filter_playback_track_strings(raw_tracks, log)
+    if not valid_tracks:
+        raise ValueError("Todas as faixas desta colecao sao playbacks e foram proibidas.")
+    return collection_type, playlist_name, valid_tracks
 
 
 def extract_playlist_data_with_metadata(playlist_url: str, log=None) -> tuple[str, str, list[TrackInfo]]:
-    """Versao enriquecida; a funcao legada acima permanece compativel."""
+    """Versao enriquecida com metadados estruturados. Playbacks sao estritamente proibidos."""
     log = log or _noop_log
     playlist_url = normalize_spotify_playlist_url(playlist_url, log)
     collection_type, playlist_id = extract_spotify_collection(playlist_url)
@@ -405,6 +447,8 @@ def extract_playlist_data_with_metadata(playlist_url: str, log=None) -> tuple[st
         track = _track_info_from_item(entity)
         if not track:
             raise ValueError("Nao foi possivel extrair os metadados da faixa do Spotify.")
+        if is_playback_title(track.title):
+            raise ValueError(f"A faixa '{track.title}' e um playback. Downloads de playback estao proibidos.")
         return collection_type, sanitize_folder_name(track.title), [track]
 
     playlist_name = "Spotify"
@@ -417,34 +461,37 @@ def extract_playlist_data_with_metadata(playlist_url: str, log=None) -> tuple[st
             pass
 
     access_token = extract_access_token_from_embed_data(data)
+    raw_tracks = None
     if collection_type == "playlist" and access_token:
         try:
             log("Buscando todas as paginas da playlist...")
-            tracks = fetch_all_track_info_from_graphql(playlist_id, access_token, log)
-            if tracks:
-                return collection_type, playlist_name, tracks
+            raw_tracks = fetch_all_track_info_from_graphql(playlist_id, access_token, log)
         except (KeyError, TypeError, ValueError, requests.exceptions.RequestException) as error:
             log(f"  Nao foi possivel paginar pelo Spotify: {error}")
             log("  Usando lista inicial disponivel no embed.")
 
-    try:
-        album_name = playlist_name if collection_type == "album" else ""
-        tracks = extract_track_info_from_embed_data(data, album_name)
-        if tracks:
-            return collection_type, playlist_name, tracks
-    except (KeyError, TypeError):
-        pass
-    try:
-        tracks = extract_track_info_from_page_data(data)
-        if tracks:
-            return collection_type, playlist_name, tracks
-    except (KeyError, TypeError) as error:
-        raise ValueError(
-            "Erro ao analisar os metadados do Spotify. "
-            f"O layout do site pode ter mudado. Detalhes: {error}"
-        ) from error
+    if not raw_tracks:
+        try:
+            album_name = playlist_name if collection_type == "album" else ""
+            raw_tracks = extract_track_info_from_embed_data(data, album_name)
+        except (KeyError, TypeError):
+            pass
+    if not raw_tracks:
+        try:
+            raw_tracks = extract_track_info_from_page_data(data)
+        except (KeyError, TypeError) as error:
+            raise ValueError(
+                "Erro ao analisar os metadados do Spotify. "
+                f"O layout do site pode ter mudado. Detalhes: {error}"
+            ) from error
 
-    raise ValueError("Nenhuma faixa com metadados validos foi encontrada no Spotify.")
+    if not raw_tracks:
+        raise ValueError("Nenhuma faixa com metadados validos foi encontrada no Spotify.")
+
+    valid_tracks = filter_playback_tracks(raw_tracks, log)
+    if not valid_tracks:
+        raise ValueError("Todas as faixas encontradas sao playbacks e foram proibidas.")
+    return collection_type, playlist_name, valid_tracks
 
 
 def extract_playlist_tracks(playlist_url: str) -> list[str]:

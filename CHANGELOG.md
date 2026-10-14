@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.0.1] - 2026-10-14
+
+### Added
+
+- Proibição estrita de download de playbacks no programa:
+  - Filtro automático no Spotify para detectar e ignorar faixas de playback em playlists e álbuns (ex.: `- Playback`, `(Playback)`, `Karaokê`, `Backing Track`).
+  - Bloqueio imediato na seleção do YouTube para descartar qualquer vídeo ou canal de playback/karaokê (`BAD_RESULT_TERMS` e `BAD_CHANNEL_TERMS`).
+  - Bloqueio preventivo na função `download_music` para impedir requisições diretas de playbacks.
+  - Expansão da consulta do YouTube para 10 candidatos (`ytsearch10`) com retries automáticos usando termos de áudio oficial caso a busca inicial contenha apenas playbacks descartados.
+
+### Fixed
+
+- Correção do descarte falso-positivo de faixas ao vivo quando a faixa original do Spotify é uma versão ao vivo (`allowed_live`).
+- Correção do fallback de busca sem cookies quando a consulta inicial com cookies falha.
+
+### Packaging
+
+- Versão do produto atualizada para `2.0.1`.
+- Executável: `release/BibliotecaOffline_v2.0.1.exe`.
+- Instalador Inno Setup: `release/BibliotecaOffline_Setup_v2.0.1.exe`.
+- SHA-256 do instalador: `F38044D80402D195599BF554A4F3293025D7FDA47E04BECF28F6E57846422886`.
+
 ## [2.0.0] - 2026-10-03
 
 ### Added
