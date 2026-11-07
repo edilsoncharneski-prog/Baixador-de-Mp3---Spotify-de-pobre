@@ -30,19 +30,37 @@ def _noop_log(message: str) -> None:
     pass
 
 
+def _image_dimensions(item: object) -> int:
+    if not isinstance(item, dict):
+        return 0
+    width = _to_int(item.get("maxWidth") or item.get("width")) or 0
+    height = _to_int(item.get("maxHeight") or item.get("height")) or 0
+    return width * height
+
+
 def _extract_image_url(value) -> str | None:
-    """Extrai a primeira URL de capa conhecida nas estruturas do Spotify."""
+    """Extrai a melhor URL de capa conhecida nas estruturas do Spotify."""
     if isinstance(value, dict):
         for key in ("cover_url", "url"):
             candidate = value.get(key)
             if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
                 return candidate
-        for key in ("coverArt", "sources", "images", "image", "imageUrl", "album", "albumOfTrack", "cover"):
+        for key in (
+            "coverArt",
+            "visualIdentity",
+            "sources",
+            "images",
+            "image",
+            "imageUrl",
+            "album",
+            "albumOfTrack",
+            "cover",
+        ):
             result = _extract_image_url(value.get(key))
             if result:
                 return result
     elif isinstance(value, list):
-        for item in value:
+        for item in sorted(value, key=_image_dimensions, reverse=True):
             result = _extract_image_url(item)
             if result:
                 return result
@@ -72,7 +90,13 @@ def _to_int(value) -> int | None:
         return None
 
 
-def _track_info_from_item(item: dict, album_name: str = "", index: int | None = None, total: int | None = None) -> TrackInfo | None:
+def _track_info_from_item(
+    item: dict,
+    album_name: str = "",
+    index: int | None = None,
+    total: int | None = None,
+    default_cover_url: str | None = None,
+) -> TrackInfo | None:
     title = item.get("title") or item.get("name")
     artist = item.get("subtitle") or _artist_names(item.get("artists"))
     nested_track = item.get("track") if isinstance(item.get("track"), dict) else {}
@@ -96,7 +120,7 @@ def _track_info_from_item(item: dict, album_name: str = "", index: int | None = 
         track_total=_to_int(item.get("trackTotal") or total),
         disc_number=_to_int(item.get("discNumber") or nested_track.get("discNumber")),
         disc_total=_to_int(item.get("discTotal")),
-        cover_url=_extract_image_url(item) or _extract_image_url(nested_track),
+        cover_url=_extract_image_url(item) or _extract_image_url(nested_track) or default_cover_url,
     )
 
 
@@ -174,11 +198,13 @@ def extract_tracks_from_embed_data(data: dict) -> list[str]:
 
 
 def extract_track_info_from_embed_data(data: dict, album_name: str = "") -> list[TrackInfo]:
-    track_items = data["props"]["pageProps"]["state"]["data"]["entity"]["trackList"]
+    entity = data["props"]["pageProps"]["state"]["data"]["entity"]
+    track_items = entity["trackList"]
+    default_cover_url = _extract_image_url(entity)
     total = len(track_items)
     tracks = []
     for index, item in enumerate(track_items, start=1):
-        track = _track_info_from_item(item, album_name, index, total)
+        track = _track_info_from_item(item, album_name, index, total, default_cover_url)
         if track:
             tracks.append(track)
     return tracks
@@ -201,11 +227,13 @@ def extract_tracks_from_page_data(data: dict) -> list[str]:
 
 
 def extract_track_info_from_page_data(data: dict) -> list[TrackInfo]:
-    track_items = data["props"]["pageProps"]["data"]["trackList"]["items"]
+    page_data = data["props"]["pageProps"]["data"]
+    track_items = page_data["trackList"]["items"]
+    default_cover_url = _extract_image_url(page_data)
     total = len(track_items)
     tracks = []
     for index, item in enumerate(track_items, start=1):
-        track = _track_info_from_item(item, index=index, total=total)
+        track = _track_info_from_item(item, index=index, total=total, default_cover_url=default_cover_url)
         if track:
             tracks.append(track)
     return tracks

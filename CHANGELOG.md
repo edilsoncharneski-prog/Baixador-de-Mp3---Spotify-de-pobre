@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.2] - 2026-11-06
+
+### Fixed
+
+- Correção da extração de capa (`cover_url`) em álbuns e faixas avulsas do Spotify via página embed (`visualIdentity.image`), priorizando a maior resolução disponível (`640x640`).
+- Repasse automático da capa do álbum/coleção (`default_cover_url`) para todas as faixas de `trackList` quando os itens individuais do embed não trazem imagem própria.
+
+### Packaging
+
+- Versão do produto atualizada para `2.0.2`.
+- Executável: `release/BibliotecaOffline_v2.0.2.exe`.
+- Instalador Inno Setup: `release/BibliotecaOffline_Setup_v2.0.2.exe`.
+- SHA-256 do instalador: `DCC46C902F942AFE6BC69B6556AAB85F45A42384C5A5B7F3108C05237D6BAD9A`.
+
 ## [2.0.1] - 2026-10-14
 
 ### Added
